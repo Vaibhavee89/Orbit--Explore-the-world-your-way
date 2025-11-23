@@ -53,11 +53,12 @@ Enthusiastic, knowledgeable, and organized. Act like a travel guide showing some
 
 const ai = new GoogleGenAI({
   apiKey: process.env.API_KEY,
+  apiVersion: 'v1',
 });
 
 function createAiChat(mcpClient: Client) {
   return ai.chats.create({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-1.5-flash-latest',
     config: {
       systemInstruction: SYSTEM_INSTRUCTIONS,
       tools: [
