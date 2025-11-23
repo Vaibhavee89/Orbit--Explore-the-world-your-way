@@ -19,6 +19,7 @@
     "mapillary-js": "^4.1.2",
     "marked": "^15.0.12",
     "marked-highlight": "^2.2.1",
+    "openai": "^6.9.1",
     "zod": "^3.25.7"
   },
   "devDependencies": {
