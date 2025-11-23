@@ -57,7 +57,7 @@ const ai = new GoogleGenAI({
 
 function createAiChat(mcpClient: Client) {
   return ai.chats.create({
-    model: 'gemini-1.5-pro',
+    model: 'gemini-1.5-pro-latest',
     config: {
       systemInstruction: SYSTEM_INSTRUCTIONS,
       tools: [
