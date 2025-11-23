@@ -148,6 +148,9 @@ export class MapApp extends LitElement {
   @state() isListening = false;
   @state() voiceTranscript = '';
   @state() isOrbiting = false;
+  @state() isAutoRotating = false;
+  @state() isAutoTour = false;
+  @state() ambientSoundEnabled = false;
   
   @state() currentLocation: {lat: number, lng: number} | null = null;
   @state() currentLocationName: string | null = null;
@@ -196,6 +199,9 @@ export class MapApp extends LitElement {
   private avatarHeading = 0;
   private animationFrameId?: number;
   private orbitFrameId?: number;
+  private autoRotateIntervalId?: number;
+  private autoTourIntervalId?: number;
+  private ambientAudio?: HTMLAudioElement;
 
 
   sendMessageHandler?: CallableFunction;
@@ -432,6 +438,9 @@ USER_PROVIDED_GOOGLE_MAPS_API_KEY with your actual API key.`;
                         heading: 0,
                         pitch: 0
                     });
+                    
+                    // Add smooth transition animation
+                    this.animatePanoTransition();
                     
                     // Listener for position updates to sync mini-map in exploration mode
                     this.panorama.addListener("position_changed", () => {
@@ -1220,6 +1229,84 @@ USER_PROVIDED_GOOGLE_MAPS_API_KEY with your actual API key.`;
       });
   }
 
+  // Enhanced Street View Features
+  
+  private animatePanoTransition() {
+      // Smooth fade-in effect for panorama transitions
+      const panoElement = document.getElementById('pano');
+      if (panoElement) {
+          panoElement.style.opacity = '0';
+          panoElement.style.transition = 'opacity 0.5s ease-in-out';
+          setTimeout(() => {
+              panoElement.style.opacity = '1';
+          }, 50);
+      }
+  }
+
+  toggleAutoRotate() {
+      this.isAutoRotating = !this.isAutoRotating;
+      
+      if (this.isAutoRotating) {
+          // Start auto-rotation: slowly rotate the view 360 degrees
+          this.autoRotateIntervalId = window.setInterval(() => {
+              if (this.panorama && this.isAutoRotating) {
+                  const pov = this.panorama.getPov();
+                  this.panorama.setPov({
+                      heading: (pov.heading + 0.5) % 360, // Slow rotation
+                      pitch: pov.pitch
+                  });
+              }
+          }, 50); // Update every 50ms for smooth rotation
+      } else {
+          // Stop auto-rotation
+          if (this.autoRotateIntervalId) {
+              clearInterval(this.autoRotateIntervalId);
+              this.autoRotateIntervalId = undefined;
+          }
+      }
+  }
+
+  toggleAutoTour() {
+      this.isAutoTour = !this.isAutoTour;
+      
+      if (this.isAutoTour) {
+          // Start auto-tour: automatically move forward every few seconds
+          this.autoTourIntervalId = window.setInterval(() => {
+              if (this.panorama && this.isAutoTour) {
+                  this.movePanoForward();
+              }
+          }, 5000); // Move forward every 5 seconds
+      } else {
+          // Stop auto-tour
+          if (this.autoTourIntervalId) {
+              clearInterval(this.autoTourIntervalId);
+              this.autoTourIntervalId = undefined;
+          }
+      }
+  }
+
+  toggleAmbientSound() {
+      this.ambientSoundEnabled = !this.ambientSoundEnabled;
+      
+      if (this.ambientSoundEnabled) {
+          // Play ambient city sounds
+          if (!this.ambientAudio) {
+              this.ambientAudio = new Audio();
+              // Using a free ambient sound (you can replace with better sources)
+              this.ambientAudio.src = 'https://assets.mixkit.co/active_storage/sfx/2523/2523-preview.mp3';
+              this.ambientAudio.loop = true;
+              this.ambientAudio.volume = 0.3;
+          }
+          this.ambientAudio.play().catch(e => console.log('Audio play failed:', e));
+      } else {
+          // Stop ambient sounds
+          if (this.ambientAudio) {
+              this.ambientAudio.pause();
+              this.ambientAudio.currentTime = 0;
+          }
+      }
+  }
+
   // Speech Recognition
   private initSpeechRecognition() {
       if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -1486,6 +1573,33 @@ USER_PROVIDED_GOOGLE_MAPS_API_KEY with your actual API key.`;
                     : html`<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-480q-66 0-113-47t-47-113q0-66 47-113t113-47q66 0 113 47t47 113q0 66-47 113t-113 47ZM160-160v-32q0-34 17.5-62.5T224-304q55-27 109.5-41.5T480-360q58 0 113.5 15T736-304q29 15 46.5 43.5T800-192v32h-80v-32q0-11-5.5-20T700-228q-54-28-109-40t-111-12q-56 0-111 12t-109 40q-9 5-14.5 14T240-192v32h-80Z"/></svg> Switch to 3D Avatar`
                  }
             </button>
+
+            <!-- Enhanced Street View Controls -->
+            <div id="enhanced-controls">
+                <button class="enhance-btn" 
+                        @click=${() => this.toggleAutoRotate()}
+                        class=${classMap({'active': this.isAutoRotating})}
+                        title="Auto-Rotate View">
+                    <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-80q-75 0-140.5-28.5t-114-77q-48.5-48.5-77-114T120-440h80q0 117 81.5 198.5T480-160q117 0 198.5-81.5T760-440q0-117-81.5-198.5T480-720h-6l62 62-56 58-160-160 160-160 56 58-62 62h6q75 0 140.5 28.5t114 77q48.5 48.5 77 114T840-440q0 75-28.5 140.5t-77 114q-48.5 48.5-114 77T480-80Z"/></svg>
+                    ${this.isAutoRotating ? 'Stop Rotate' : 'Auto-Rotate'}
+                </button>
+                
+                <button class="enhance-btn" 
+                        @click=${() => this.toggleAutoTour()}
+                        class=${classMap({'active': this.isAutoTour})}
+                        title="Auto-Tour Mode">
+                    <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="m600-200-57-56 184-184H120v-80h607L543-704l57-56 280 280-280 280Z"/></svg>
+                    ${this.isAutoTour ? 'Stop Tour' : 'Auto-Tour'}
+                </button>
+                
+                <button class="enhance-btn" 
+                        @click=${() => this.toggleAmbientSound()}
+                        class=${classMap({'active': this.ambientSoundEnabled})}
+                        title="Ambient Sounds">
+                    <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M560-131v-82q90-26 145-100t55-168q0-94-55-168T560-749v-82q124 28 202 125.5T840-481q0 127-78 224.5T560-131ZM120-360v-240h160l200-200v640L280-360H120Zm440 40v-322q47 22 73.5 66t26.5 96q0 51-26.5 94.5T560-320ZM400-606l-86 86H200v80h114l86 86v-252ZM300-480Z"/></svg>
+                    ${this.ambientSoundEnabled ? 'Sound Off' : 'Ambient Sound'}
+                </button>
+            </div>
 
             <button id="narrate-btn" 
                     class=${classMap({'speaking': this.isSpeaking})}
