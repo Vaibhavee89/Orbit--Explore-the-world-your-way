@@ -88,6 +88,19 @@ interface BucketItem {
   lng: number;
   notes?: string;
   addedAt: number;
+  weather?: WeatherInfo;
+  photos?: string[];
+  hasStreetView?: boolean;
+  estimatedBudget?: {
+    flight: number;
+    accommodation: number;
+    food: number;
+    activities: number;
+    total: number;
+    currency: string;
+  };
+  visited?: boolean;
+  rating?: number;
 }
 
 interface WeatherInfo {
@@ -95,6 +108,32 @@ interface WeatherInfo {
   windspeed: number;
   weathercode: number;
   is_day: number;
+}
+
+type TransportMode = 'DRIVING' | 'TRANSIT' | 'WALKING' | 'BICYCLING' | 'FLIGHT';
+type RouteOptimization = 'FASTEST' | 'CHEAPEST' | 'BALANCED';
+
+interface TripPlan {
+  id: string;
+  name: string;
+  destinations: BucketItem[];
+  transportMode: TransportMode;
+  optimization: RouteOptimization;
+  routes?: TripRoute[];
+  totalDistance?: number;
+  totalDuration?: number;
+  totalCost?: number;
+  createdAt: number;
+}
+
+interface TripRoute {
+  from: BucketItem;
+  to: BucketItem;
+  distance: number;
+  duration: number;
+  cost: number;
+  mode: TransportMode;
+  polyline?: {lat: number, lng: number}[];
 }
 
 // Google Maps API Key: Loaded from environment variable.
@@ -139,6 +178,13 @@ export class MapApp extends LitElement {
   @state() mapInitialized = false;
   @state() mapError = '';
   @state() bucketList: BucketItem[] = [];
+  @state() expandedBucketItemId: string | null = null;
+  @state() selectedTripItems: Set<string> = new Set();
+  @state() showTripPlanner = false;
+  @state() currentTripPlan: TripPlan | null = null;
+  @state() tripTransportMode: TransportMode = 'DRIVING';
+  @state() tripOptimization: RouteOptimization = 'BALANCED';
+  @state() isCalculatingTrip = false;
   @state() showPano = false;
   @state() isPanoExpanded = false;
   @state() routePath: {lat: number; lng: number}[] = [];
@@ -151,6 +197,7 @@ export class MapApp extends LitElement {
   @state() isAutoRotating = false;
   @state() isAutoTour = false;
   @state() ambientSoundEnabled = false;
+  @state() isNightMode = false;
   
   @state() currentLocation: {lat: number, lng: number} | null = null;
   @state() currentLocationName: string | null = null;
@@ -733,6 +780,110 @@ USER_PROVIDED_GOOGLE_MAPS_API_KEY with your actual API key.`;
       // Effect loop handled in updated()
   }
 
+  private toggleNightMode() {
+      this.isNightMode = !this.isNightMode;
+      this.applyNightMode();
+  }
+
+  private applyNightMode() {
+      if (!this.map) return;
+      
+      if (this.isNightMode) {
+          // Apply night mode styling - darken the map and adjust colors
+          (this.map as any).style.filter = 'brightness(0.6) contrast(1.1) saturate(0.8) hue-rotate(-10deg)';
+          (this.map as any).style.transition = 'filter 1s ease-in-out';
+          
+          // Add a subtle blue tint overlay for night atmosphere to map
+          const mapContainer = this.mapContainerElement;
+          if (mapContainer) {
+              mapContainer.style.position = 'relative';
+              // Check if overlay already exists
+              let overlay = mapContainer.querySelector('.night-overlay') as HTMLElement;
+              if (!overlay) {
+                  overlay = document.createElement('div');
+                  overlay.className = 'night-overlay';
+                  overlay.style.cssText = `
+                      position: absolute;
+                      top: 0;
+                      left: 0;
+                      width: 100%;
+                      height: 100%;
+                      background: linear-gradient(180deg, rgba(0, 20, 60, 0.3) 0%, rgba(0, 10, 40, 0.2) 100%);
+                      pointer-events: none;
+                      z-index: 1;
+                      transition: opacity 1s ease-in-out;
+                  `;
+                  mapContainer.appendChild(overlay);
+              }
+              overlay.style.opacity = '1';
+          }
+          
+          // Apply night mode to Street View panorama
+          const panoElement = document.querySelector('#pano') as HTMLElement;
+          if (panoElement) {
+              panoElement.style.filter = 'brightness(0.5) contrast(1.2) saturate(0.7) hue-rotate(-15deg)';
+              panoElement.style.transition = 'filter 1s ease-in-out';
+              
+              // Add night overlay to panorama
+              let panoOverlay = panoElement.querySelector('.pano-night-overlay') as HTMLElement;
+              if (!panoOverlay) {
+                  panoOverlay = document.createElement('div');
+                  panoOverlay.className = 'pano-night-overlay';
+                  panoOverlay.style.cssText = `
+                      position: absolute;
+                      top: 0;
+                      left: 0;
+                      width: 100%;
+                      height: 100%;
+                      background: radial-gradient(circle at 50% 30%, rgba(30, 40, 80, 0.2) 0%, rgba(10, 15, 40, 0.4) 100%);
+                      pointer-events: none;
+                      z-index: 10;
+                      transition: opacity 1s ease-in-out;
+                  `;
+                  panoElement.style.position = 'relative';
+                  panoElement.appendChild(panoOverlay);
+              }
+              panoOverlay.style.opacity = '1';
+          }
+      } else {
+          // Restore day mode
+          (this.map as any).style.filter = 'none';
+          (this.map as any).style.transition = 'filter 1s ease-in-out';
+          
+          // Remove night overlay from map
+          const mapContainer = this.mapContainerElement;
+          if (mapContainer) {
+              const overlay = mapContainer.querySelector('.night-overlay') as HTMLElement;
+              if (overlay) {
+                  overlay.style.opacity = '0';
+                  setTimeout(() => {
+                      if (overlay.parentNode) {
+                          overlay.parentNode.removeChild(overlay);
+                      }
+                  }, 1000);
+              }
+          }
+          
+          // Restore day mode to Street View panorama
+          const panoElement = document.querySelector('#pano') as HTMLElement;
+          if (panoElement) {
+              panoElement.style.filter = 'none';
+              panoElement.style.transition = 'filter 1s ease-in-out';
+              
+              // Remove night overlay from panorama
+              const panoOverlay = panoElement.querySelector('.pano-night-overlay') as HTMLElement;
+              if (panoOverlay) {
+                  panoOverlay.style.opacity = '0';
+                  setTimeout(() => {
+                      if (panoOverlay.parentNode) {
+                          panoOverlay.parentNode.removeChild(panoOverlay);
+                      }
+                  }, 1000);
+              }
+          }
+      }
+  }
+
   /**
    * Handle generic map queries from the MCP server.
    */
@@ -960,6 +1111,455 @@ USER_PROVIDED_GOOGLE_MAPS_API_KEY with your actual API key.`;
       this.showWeather = false;
       this.avatarLat = item.lat;
       this.avatarLng = item.lng;
+  }
+
+  private toggleBucketItemExpanded(itemId: string) {
+      if (this.expandedBucketItemId === itemId) {
+          this.expandedBucketItemId = null;
+      } else {
+          this.expandedBucketItemId = itemId;
+          // Enrich the item with additional data if not already loaded
+          const item = this.bucketList.find(i => i.id === itemId);
+          if (item && !item.weather) {
+              this.enrichBucketItem(item);
+          }
+      }
+  }
+
+  private async enrichBucketItem(item: BucketItem) {
+      // Fetch weather
+      try {
+          const response = await fetch(
+              `https://api.open-meteo.com/v1/forecast?latitude=${item.lat}&longitude=${item.lng}&current=temperature_2m,weather_code,wind_speed_10m,is_day&temperature_unit=celsius&wind_speed_unit=kmh`
+          );
+          const data = await response.json();
+          if (data.current) {
+              const weather: WeatherInfo = {
+                  temperature: data.current.temperature_2m,
+                  weathercode: data.current.weather_code,
+                  windspeed: data.current.wind_speed_10m,
+                  is_day: data.current.is_day
+              };
+              // Update the item
+              this.bucketList = this.bucketList.map(i => 
+                  i.id === item.id ? {...i, weather} : i
+              );
+          }
+      } catch (e) {
+          console.error('Failed to fetch weather for bucket item', e);
+      }
+
+      // Check for Street View availability
+      if (this.streetViewService) {
+          this.streetViewService.getPanorama(
+              {location: {lat: item.lat, lng: item.lng}, radius: 50},
+              (data: any, status: string) => {
+                  const hasStreetView = status === 'OK';
+                  this.bucketList = this.bucketList.map(i => 
+                      i.id === item.id ? {...i, hasStreetView} : i
+                  );
+              }
+          );
+      }
+
+      // Estimate budget
+      const budget = this.estimateTravelBudget(item.name);
+      this.bucketList = this.bucketList.map(i => 
+          i.id === item.id ? {...i, estimatedBudget: budget} : i
+      );
+  }
+
+  private estimateTravelBudget(locationName: string): {
+      flight: number;
+      accommodation: number;
+      food: number;
+      activities: number;
+      total: number;
+      currency: string;
+  } {
+      // Simple budget estimation based on location type
+      const location = locationName.toLowerCase();
+      
+      let flightCost = 500;
+      let accommodationPerNight = 100;
+      let foodPerDay = 50;
+      let activitiesPerDay = 75;
+      
+      // Adjust based on popular destinations
+      if (location.includes('paris') || location.includes('london') || location.includes('tokyo')) {
+          flightCost = 800;
+          accommodationPerNight = 150;
+          foodPerDay = 80;
+          activitiesPerDay = 100;
+      } else if (location.includes('bali') || location.includes('thailand') || location.includes('vietnam')) {
+          flightCost = 600;
+          accommodationPerNight = 50;
+          foodPerDay = 25;
+          activitiesPerDay = 40;
+      } else if (location.includes('new york') || location.includes('san francisco') || location.includes('dubai')) {
+          flightCost = 700;
+          accommodationPerNight = 200;
+          foodPerDay = 100;
+          activitiesPerDay = 150;
+      }
+      
+      const nights = 5; // Assume 5-day trip
+      const accommodation = accommodationPerNight * nights;
+      const food = foodPerDay * nights;
+      const activities = activitiesPerDay * nights;
+      const total = flightCost + accommodation + food + activities;
+      
+      return {
+          flight: flightCost,
+          accommodation,
+          food,
+          activities,
+          total,
+          currency: 'USD'
+      };
+  }
+
+  private toggleVisited(itemId: string) {
+      this.bucketList = this.bucketList.map(item => 
+          item.id === itemId ? {...item, visited: !item.visited} : item
+      );
+  }
+
+  private updateRating(itemId: string, rating: number) {
+      this.bucketList = this.bucketList.map(item => 
+          item.id === itemId ? {...item, rating} : item
+      );
+  }
+
+  private startVirtualTour(item: BucketItem) {
+      // Fly to location and start exploration mode
+      this.flyToBucketItem(item);
+      setTimeout(() => {
+          if (this.showPano && !this.isExplorationMode) {
+              this.toggleExplorationMode();
+          }
+      }, 1500);
+  }
+
+  /** Trip Planning Methods */
+
+  private toggleTripItemSelection(itemId: string) {
+      const newSelection = new Set(this.selectedTripItems);
+      if (newSelection.has(itemId)) {
+          newSelection.delete(itemId);
+      } else {
+          newSelection.add(itemId);
+      }
+      this.selectedTripItems = newSelection;
+  }
+
+  private openTripPlanner() {
+      if (this.selectedTripItems.size < 2) {
+          alert('Please select at least 2 destinations to plan a trip');
+          return;
+      }
+      this.showTripPlanner = true;
+  }
+
+  private closeTripPlanner() {
+      this.showTripPlanner = false;
+      this.currentTripPlan = null;
+  }
+
+  private async calculateTrip() {
+      if (this.selectedTripItems.size < 2) return;
+      
+      this.isCalculatingTrip = true;
+      
+      try {
+          const selectedDestinations = this.bucketList.filter(item => 
+              this.selectedTripItems.has(item.id)
+          );
+          
+          // Optimize route order based on selected optimization
+          const optimizedOrder = await this.optimizeRouteOrder(
+              selectedDestinations,
+              this.tripOptimization
+          );
+          
+          // Calculate routes between consecutive destinations
+          const routes = await this.calculateRoutes(
+              optimizedOrder,
+              this.tripTransportMode
+          );
+          
+          // Calculate totals
+          const totalDistance = routes.reduce((sum, r) => sum + r.distance, 0);
+          const totalDuration = routes.reduce((sum, r) => sum + r.duration, 0);
+          const totalCost = routes.reduce((sum, r) => sum + r.cost, 0);
+          
+          this.currentTripPlan = {
+              id: Date.now().toString(),
+              name: `Trip to ${optimizedOrder.length} destinations`,
+              destinations: optimizedOrder,
+              transportMode: this.tripTransportMode,
+              optimization: this.tripOptimization,
+              routes,
+              totalDistance,
+              totalDuration,
+              totalCost,
+              createdAt: Date.now()
+          };
+          
+          // Visualize on map
+          this.visualizeTripOnMap(this.currentTripPlan);
+          
+      } catch (error) {
+          console.error('Failed to calculate trip:', error);
+          alert('Failed to calculate trip. Please try again.');
+      } finally {
+          this.isCalculatingTrip = false;
+      }
+  }
+
+  private async optimizeRouteOrder(
+      destinations: BucketItem[],
+      optimization: RouteOptimization
+  ): Promise<BucketItem[]> {
+      if (destinations.length <= 2) return destinations;
+      
+      // For FASTEST and BALANCED, use nearest neighbor algorithm
+      if (optimization === 'FASTEST' || optimization === 'BALANCED') {
+          return this.nearestNeighborOptimization(destinations);
+      }
+      
+      // For CHEAPEST, prioritize shorter distances (proxy for cost)
+      return this.cheapestRouteOptimization(destinations);
+  }
+
+  private nearestNeighborOptimization(destinations: BucketItem[]): BucketItem[] {
+      const result: BucketItem[] = [];
+      const remaining = [...destinations];
+      
+      // Start with first destination
+      let current = remaining.shift()!;
+      result.push(current);
+      
+      while (remaining.length > 0) {
+          // Find nearest unvisited destination
+          let nearestIndex = 0;
+          let minDistance = this.calculateDistance(
+              current.lat, current.lng,
+              remaining[0].lat, remaining[0].lng
+          );
+          
+          for (let i = 1; i < remaining.length; i++) {
+              const distance = this.calculateDistance(
+                  current.lat, current.lng,
+                  remaining[i].lat, remaining[i].lng
+              );
+              if (distance < minDistance) {
+                  minDistance = distance;
+                  nearestIndex = i;
+              }
+          }
+          
+          current = remaining.splice(nearestIndex, 1)[0];
+          result.push(current);
+      }
+      
+      return result;
+  }
+
+  private cheapestRouteOptimization(destinations: BucketItem[]): BucketItem[] {
+      // Similar to nearest neighbor but considers cost factors
+      return this.nearestNeighborOptimization(destinations);
+  }
+
+  private calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+      // Haversine formula
+      const R = 6371; // Earth's radius in km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+  }
+
+  private async calculateRoutes(
+      destinations: BucketItem[],
+      mode: TransportMode
+  ): Promise<TripRoute[]> {
+      const routes: TripRoute[] = [];
+      
+      for (let i = 0; i < destinations.length - 1; i++) {
+          const from = destinations[i];
+          const to = destinations[i + 1];
+          
+          if (mode === 'FLIGHT') {
+              // For flights, use direct distance calculation
+              const distance = this.calculateDistance(from.lat, from.lng, to.lat, to.lng);
+              routes.push({
+                  from,
+                  to,
+                  distance,
+                  duration: distance / 800 * 60, // Assume 800 km/h flight speed
+                  cost: this.estimateFlightCost(distance),
+                  mode: 'FLIGHT'
+              });
+          } else {
+              // Use Google Directions API for ground transport
+              try {
+                  const route = await this.getDirectionsRoute(from, to, mode);
+                  routes.push(route);
+              } catch (error) {
+                  console.error('Failed to get directions:', error);
+                  // Fallback to direct calculation
+                  const distance = this.calculateDistance(from.lat, from.lng, to.lat, to.lng);
+                  routes.push({
+                      from,
+                      to,
+                      distance,
+                      duration: this.estimateDuration(distance, mode),
+                      cost: this.estimateCost(distance, mode),
+                      mode
+                  });
+              }
+          }
+      }
+      
+      return routes;
+  }
+
+  private async getDirectionsRoute(
+      from: BucketItem,
+      to: BucketItem,
+      mode: TransportMode
+  ): Promise<TripRoute> {
+      return new Promise((resolve, reject) => {
+          if (!this.directionsService) {
+              reject(new Error('Directions service not available'));
+              return;
+          }
+          
+          const travelMode = mode === 'DRIVING' ? 'DRIVING' :
+                            mode === 'TRANSIT' ? 'TRANSIT' :
+                            mode === 'WALKING' ? 'WALKING' : 'BICYCLING';
+          
+          this.directionsService.route({
+              origin: {lat: from.lat, lng: from.lng},
+              destination: {lat: to.lat, lng: to.lng},
+              travelMode: (window as any).google.maps.TravelMode[travelMode]
+          }, (result: any, status: string) => {
+              if (status === 'OK' && result.routes[0]) {
+                  const leg = result.routes[0].legs[0];
+                  const polyline = leg.steps.flatMap((step: any) => 
+                      step.path.map((p: any) => ({lat: p.lat(), lng: p.lng()}))
+                  );
+                  
+                  resolve({
+                      from,
+                      to,
+                      distance: leg.distance.value / 1000, // Convert to km
+                      duration: leg.duration.value / 60, // Convert to minutes
+                      cost: this.estimateCost(leg.distance.value / 1000, mode),
+                      mode,
+                      polyline
+                  });
+              } else {
+                  reject(new Error(`Directions request failed: ${status}`));
+              }
+          });
+      });
+  }
+
+  private estimateFlightCost(distanceKm: number): number {
+      // Simple flight cost estimation
+      const baseCost = 100;
+      const costPerKm = 0.15;
+      return baseCost + (distanceKm * costPerKm);
+  }
+
+  private estimateCost(distanceKm: number, mode: TransportMode): number {
+      switch (mode) {
+          case 'DRIVING':
+              return distanceKm * 0.5; // $0.50 per km (fuel + wear)
+          case 'TRANSIT':
+              return distanceKm * 0.2; // $0.20 per km
+          case 'WALKING':
+              return 0;
+          case 'BICYCLING':
+              return 0;
+          case 'FLIGHT':
+              return this.estimateFlightCost(distanceKm);
+          default:
+              return distanceKm * 0.3;
+      }
+  }
+
+  private estimateDuration(distanceKm: number, mode: TransportMode): number {
+      // Returns duration in minutes
+      switch (mode) {
+          case 'DRIVING':
+              return distanceKm / 60 * 60; // 60 km/h average
+          case 'TRANSIT':
+              return distanceKm / 40 * 60; // 40 km/h average
+          case 'WALKING':
+              return distanceKm / 5 * 60; // 5 km/h
+          case 'BICYCLING':
+              return distanceKm / 15 * 60; // 15 km/h
+          case 'FLIGHT':
+              return distanceKm / 800 * 60; // 800 km/h
+          default:
+              return distanceKm / 50 * 60;
+      }
+  }
+
+  private visualizeTripOnMap(trip: TripPlan) {
+      // Clear existing route
+      if (this.routePolyline) {
+          this.routePolyline.remove();
+      }
+      
+      // Draw route on map
+      if (trip.routes && trip.routes.length > 0) {
+          const allPoints: {lat: number, lng: number}[] = [];
+          
+          trip.routes.forEach(route => {
+              if (route.polyline) {
+                  allPoints.push(...route.polyline);
+              } else {
+                  // If no polyline, draw straight line
+                  allPoints.push(
+                      {lat: route.from.lat, lng: route.from.lng},
+                      {lat: route.to.lat, lng: route.to.lng}
+                  );
+              }
+          });
+          
+          if (this.Polyline3DElement && this.map) {
+              this.routePolyline = new this.Polyline3DElement({
+                  coordinates: allPoints,
+                  strokeColor: '#FF6B35',
+                  strokeWidth: 4,
+                  altitudeMode: 'RELATIVE_TO_GROUND',
+                  extruded: false
+              });
+              this.map.appendChild(this.routePolyline);
+          }
+          
+          // Fly to first destination
+          if (trip.destinations.length > 0) {
+              const first = trip.destinations[0];
+              this.performFlyTo(first.lat, first.lng);
+          }
+      }
+  }
+
+  private clearTripSelection() {
+      this.selectedTripItems = new Set();
+      this.currentTripPlan = null;
+      if (this.routePolyline) {
+          this.routePolyline.remove();
+          this.routePolyline = null;
+      }
   }
 
   togglePanoExpand() {
@@ -1516,6 +2116,17 @@ USER_PROVIDED_GOOGLE_MAPS_API_KEY with your actual API key.`;
                 title="360° Orbit View">
             <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M480-160q-133 0-226.5-93.5T160-480q0-133 93.5-226.5T480-800q84 0 149.5 34.5T743-675l58-58q-45-45-110-76t-131-31q-166 0-283 117t-117 283q0 166 117 283t283 117q138 0 245-81.5T843-440h-82q-29 88-104 144t-177 56Zm0-240q-33 0-56.5-23.5T400-480q0-33 23.5-56.5T480-560q33 0 56.5 23.5T560-480q0 33-23.5 56.5T480-400Zm320-365v-155h-60v155L625-680l-40 40 185 185 185-185-40-40-115 115Z"/></svg>
         </button>
+
+        <!-- Night Mode Button -->
+        <button id="night-mode-btn" 
+                class=${classMap({active: this.isNightMode})}
+                @click=${() => this.toggleNightMode()} 
+                title="${this.isNightMode ? 'Switch to Day Mode' : 'Switch to Night Mode'}">
+            ${this.isNightMode 
+                ? html`<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M480-360q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 80q-83 0-141.5-58.5T280-480q0-83 58.5-141.5T480-680q83 0 141.5 58.5T680-480q0 83-58.5 141.5T480-280ZM200-440H40v-80h160v80Zm720 0H760v-80h160v80ZM440-760v-160h80v160h-80Zm0 720v-160h80v160h-80ZM256-650l-101-97 57-59 96 100-52 56Zm492 496-97-101 53-55 101 97-57 59Zm-98-550 97-101 59 57-100 96-56-52ZM154-212l101-97 55 53-97 101-59-57Z"/></svg>`
+                : html`<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q14 0 27.5 1t26.5 3q-41 29-65.5 75.5T444-660q0 90 63 153t153 63q55 0 101-24.5t75-65.5q2 13 3 26.5t1 27.5q0 150-105 255T480-120Z"/></svg>`
+            }
+        </button>
         
         ${this.showWeather && this.weatherData
             ? html`<div id="weather-card">
@@ -1743,30 +2354,230 @@ USER_PROVIDED_GOOGLE_MAPS_API_KEY with your actual API key.`;
             })}
             style="overflow-y: auto; padding: 1rem; gap: 1rem; display: flex; flex-direction: column;">
             
+            ${this.bucketList.length > 0 ? html`
+                <div class="trip-planner-toolbar">
+                    <button 
+                        class="plan-trip-btn"
+                        @click=${() => this.openTripPlanner()}
+                        ?disabled=${this.selectedTripItems.size < 2}>
+                        🗺️ Plan Trip (${this.selectedTripItems.size} selected)
+                    </button>
+                    ${this.selectedTripItems.size > 0 ? html`
+                        <button 
+                            class="clear-selection-btn"
+                            @click=${() => this.clearTripSelection()}>
+                            Clear Selection
+                        </button>
+                    ` : ''}
+                </div>
+            ` : ''}
+            
             ${this.bucketList.length === 0 
                 ? html`<div style="text-align:center; padding: 2rem; color: var(--color-text2);">
                         <h3>Your list is empty</h3>
                         <p>Tell the AI to "Add [Place] to my bucket list"!</p>
                        </div>`
-                : this.bucketList.map(item => html`
-                    <div class="bucket-card">
-                        <div class="bucket-info">
-                            <div class="bucket-name">${item.name}</div>
-                            ${item.notes ? html`<div class="bucket-notes">${item.notes}</div>` : ''}
+                : this.bucketList.map(item => {
+                    const isExpanded = this.expandedBucketItemId === item.id;
+                    return html`
+                    <div class="bucket-card ${item.visited ? 'visited' : ''} ${this.selectedTripItems.has(item.id) ? 'selected-for-trip' : ''}" @click=${() => this.toggleBucketItemExpanded(item.id)}>
+                        <div class="bucket-header">
+                            <div class="trip-checkbox" @click=${(e: Event) => e.stopPropagation()}>
+                                <input 
+                                    type="checkbox" 
+                                    .checked=${this.selectedTripItems.has(item.id)}
+                                    @change=${() => this.toggleTripItemSelection(item.id)}
+                                    title="Select for trip planning"
+                                />
+                            </div>
+                            <div class="bucket-info">
+                                <div class="bucket-name">
+                                    ${item.visited ? html`<span class="visited-badge">✓</span>` : ''}
+                                    ${item.name}
+                                    ${item.rating ? html`<span class="rating">⭐ ${item.rating}/5</span>` : ''}
+                                </div>
+                                ${item.notes ? html`<div class="bucket-notes">${item.notes}</div>` : ''}
+                                ${item.weather ? html`
+                                    <div class="bucket-weather">
+                                        ${this.getWeatherIcon(item.weather.weathercode).icon} ${item.weather.temperature}°C
+                                    </div>
+                                ` : ''}
+                            </div>
+                            <div class="bucket-actions" @click=${(e: Event) => e.stopPropagation()}>
+                                <button @click=${() => this.flyToBucketItem(item)} title="View on Map">
+                                    <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-320q75 0 127.5-52.5T660-500q0-75-52.5-127.5T480-680q-75 0-127.5 52.5T300-500q0 75 52.5 127.5T480-320Zm0-72q-45 0-76.5-31.5T372-500q0-45 31.5-76.5T480-608q45 0 76.5 31.5T588-500q0 45-31.5 76.5T480-392Zm0 192q-146 0-266-81.5T40-500q54-137 174-218.5T480-800q146 0 266 81.5T920-500q-54 137-174 218.5T480-200Zm0-300Zm0 220q113 0 207.5-59.5T832-500q-50-101-144.5-160.5T480-720q-113 0-207.5 59.5T128-500q50 101 144.5 160.5T480-200Z"/></svg>
+                                </button>
+                                ${item.hasStreetView !== false ? html`
+                                    <button @click=${() => this.startVirtualTour(item)} title="Virtual Tour">
+                                        <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-280q-83 0-141.5-58.5T280-480q0-83 58.5-141.5T480-680q83 0 141.5 58.5T680-480q0 83-58.5 141.5T480-280Zm0-80q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 280q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z"/></svg>
+                                    </button>
+                                ` : ''}
+                                <button @click=${() => this.toggleVisited(item.id)} title="${item.visited ? 'Mark as Not Visited' : 'Mark as Visited'}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/></svg>
+                                </button>
+                                <button @click=${() => this.removeBucketItem(item.id)} title="Remove">
+                                    <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>
+                                </button>
+                            </div>
                         </div>
-                        <div class="bucket-actions">
-                            <button @click=${() => this.flyToBucketItem(item)} title="Fly to Preview">
-                                <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-320q75 0 127.5-52.5T660-500q0-75-52.5-127.5T480-680q-75 0-127.5 52.5T300-500q0 75 52.5 127.5T480-320Zm0-72q-45 0-76.5-31.5T372-500q0-45 31.5-76.5T480-608q45 0 76.5 31.5T588-500q0 45-31.5 76.5T480-392Zm0 192q-146 0-266-81.5T40-500q54-137 174-218.5T480-800q146 0 266 81.5T920-500q-54 137-174 218.5T480-200Zm0-300Zm0 220q113 0 207.5-59.5T832-500q-50-101-144.5-160.5T480-720q-113 0-207.5 59.5T128-500q50 101 144.5 160.5T480-200Z"/></svg>
-                            </button>
-                            <button @click=${() => this.removeBucketItem(item.id)} title="Remove">
-                                <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>
-                            </button>
-                        </div>
+                        
+                        ${isExpanded ? html`
+                            <div class="bucket-details" @click=${(e: Event) => e.stopPropagation()}>
+                                ${item.estimatedBudget ? html`
+                                    <div class="budget-section">
+                                        <h4>💰 Estimated Budget (5-day trip)</h4>
+                                        <div class="budget-breakdown">
+                                            <div class="budget-item">
+                                                <span>✈️ Flight:</span>
+                                                <span>$${item.estimatedBudget.flight}</span>
+                                            </div>
+                                            <div class="budget-item">
+                                                <span>🏨 Accommodation:</span>
+                                                <span>$${item.estimatedBudget.accommodation}</span>
+                                            </div>
+                                            <div class="budget-item">
+                                                <span>🍽️ Food:</span>
+                                                <span>$${item.estimatedBudget.food}</span>
+                                            </div>
+                                            <div class="budget-item">
+                                                <span>🎭 Activities:</span>
+                                                <span>$${item.estimatedBudget.activities}</span>
+                                            </div>
+                                            <div class="budget-total">
+                                                <span>Total:</span>
+                                                <span>$${item.estimatedBudget.total}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ` : ''}
+                                
+                                <div class="rating-section">
+                                    <h4>⭐ Rate this destination</h4>
+                                    <div class="star-rating">
+                                        ${[1, 2, 3, 4, 5].map(star => html`
+                                            <button 
+                                                class="star ${item.rating && star <= item.rating ? 'filled' : ''}"
+                                                @click=${() => this.updateRating(item.id, star)}>
+                                                ★
+                                            </button>
+                                        `)}
+                                    </div>
+                                </div>
+                            </div>
+                        ` : ''}
                     </div>
-                `)
+                `})
             }
         </div>
       </div>
+      
+      <!-- Trip Planner Modal -->
+      ${this.showTripPlanner ? html`
+        <div class="trip-planner-modal" @click=${() => this.closeTripPlanner()}>
+          <div class="trip-planner-content" @click=${(e: Event) => e.stopPropagation()}>
+            <div class="trip-planner-header">
+              <h2>🗺️ Smart Trip Planner</h2>
+              <button class="close-btn" @click=${() => this.closeTripPlanner()}>✕</button>
+            </div>
+            
+            <div class="trip-planner-body">
+              <div class="trip-options">
+                <div class="option-group">
+                  <label>Transport Mode:</label>
+                  <select .value=${this.tripTransportMode} @change=${(e: Event) => this.tripTransportMode = (e.target as HTMLSelectElement).value as TransportMode}>
+                    <option value="DRIVING">🚗 Driving</option>
+                    <option value="TRANSIT">🚌 Public Transit</option>
+                    <option value="WALKING">🚶 Walking</option>
+                    <option value="BICYCLING">🚴 Bicycling</option>
+                    <option value="FLIGHT">✈️ Flight</option>
+                  </select>
+                </div>
+                
+                <div class="option-group">
+                  <label>Optimization:</label>
+                  <select .value=${this.tripOptimization} @change=${(e: Event) => this.tripOptimization = (e.target as HTMLSelectElement).value as RouteOptimization}>
+                    <option value="FASTEST">⚡ Fastest Route</option>
+                    <option value="CHEAPEST">💰 Cheapest Route</option>
+                    <option value="BALANCED">⚖️ Balanced</option>
+                  </select>
+                </div>
+                
+                <button 
+                  class="calculate-btn"
+                  @click=${() => this.calculateTrip()}
+                  ?disabled=${this.isCalculatingTrip}>
+                  ${this.isCalculatingTrip ? '⏳ Calculating...' : '🧭 Calculate Route'}
+                </button>
+              </div>
+              
+              ${this.currentTripPlan ? html`
+                <div class="trip-results">
+                  <h3>📋 Trip Summary</h3>
+                  <div class="trip-stats">
+                    <div class="stat-card">
+                      <div class="stat-label">Total Distance</div>
+                      <div class="stat-value">${this.currentTripPlan.totalDistance?.toFixed(1)} km</div>
+                    </div>
+                    <div class="stat-card">
+                      <div class="stat-label">Total Duration</div>
+                      <div class="stat-value">${this.formatDuration(this.currentTripPlan.totalDuration || 0)}</div>
+                    </div>
+                    <div class="stat-card">
+                      <div class="stat-label">Estimated Cost</div>
+                      <div class="stat-value">$${this.currentTripPlan.totalCost?.toFixed(2)}</div>
+                    </div>
+                  </div>
+                  
+                  <div class="trip-itinerary">
+                    <h4>🛣️ Route Itinerary</h4>
+                    ${this.currentTripPlan.destinations.map((dest, index) => html`
+                      <div class="itinerary-item">
+                        <div class="itinerary-number">${index + 1}</div>
+                        <div class="itinerary-details">
+                          <div class="itinerary-name">${dest.name}</div>
+                          ${index < this.currentTripPlan!.destinations.length - 1 && this.currentTripPlan!.routes ? html`
+                            <div class="itinerary-route">
+                              ${this.getTransportIcon(this.currentTripPlan!.routes[index].mode)}
+                              ${this.currentTripPlan!.routes[index].distance.toFixed(1)} km • 
+                              ${this.formatDuration(this.currentTripPlan!.routes[index].duration)} • 
+                              $${this.currentTripPlan!.routes[index].cost.toFixed(2)}
+                            </div>
+                          ` : ''}
+                        </div>
+                      </div>
+                    `)}
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        </div>
+      ` : ''}
     </div>`;
+  }
+  
+  private formatDuration(minutes: number): string {
+    if (minutes < 60) {
+      return `${Math.round(minutes)} min`;
+    } else if (minutes < 1440) {
+      const hours = Math.floor(minutes / 60);
+      const mins = Math.round(minutes % 60);
+      return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    } else {
+      const days = Math.floor(minutes / 1440);
+      const hours = Math.floor((minutes % 1440) / 60);
+      return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+    }
+  }
+  
+  private getTransportIcon(mode: TransportMode): string {
+    switch (mode) {
+      case 'DRIVING': return '🚗';
+      case 'TRANSIT': return '🚌';
+      case 'WALKING': return '🚶';
+      case 'BICYCLING': return '🚴';
+      case 'FLIGHT': return '✈️';
+      default: return '🚗';
+    }
   }
 }
