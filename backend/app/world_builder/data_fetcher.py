@@ -186,6 +186,8 @@ def fetch_osm_data(
         "tourism": True,
         "shop":    True,
         "leisure": True,
+        "historic": True,
+        "natural": ["peak", "saddle", "volcano", "ridge", "cliff", "cave_entrance"],
     })
 
     elapsed = time.time() - t0

@@ -24,15 +24,18 @@ Manifest schema:
       "roads":             "roads.json",
       "heightmap":         "heightmap.json",
       "buildings_physics": "buildings_physics.json",
-      "terrain_features":  "terrain_features.json"
+      "terrain_features":  "terrain_features.json",
+      "pois":              "pois.json"
     },
     "stats": {
       "terrain":   {...},
       "buildings": {...},
       "roads":     {...},
       "features":  {slope summary},
+      "poi_count": int,
       "elapsed_s": float
-    }
+    },
+    "pointsOfInterest": [{id, name, category, subcategory, latlon, enu, tags}, ...]
   }
 """
 
@@ -54,6 +57,7 @@ from app.world_builder.elevation_fetcher import fetch_elevation
 from app.world_builder.road_processor import build_road_graph
 from app.world_builder.terrain_processor import generate_terrain_mesh
 from app.gameplay.terrain_analyzer import analyze_terrain
+from app.gameplay.poi_extractor import extract_pois
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +84,16 @@ class WorldManifest:
     bbox: dict[str, float]
     assets: dict[str, str]
     stats: dict[str, Any] = field(default_factory=dict)
+    pointsOfInterest: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id":         self.id,
-            "created_at": self.created_at,
-            "bbox":       self.bbox,
-            "assets":     self.assets,
-            "stats":      self.stats,
+            "id":               self.id,
+            "created_at":       self.created_at,
+            "bbox":             self.bbox,
+            "assets":           self.assets,
+            "stats":            self.stats,
+            "pointsOfInterest": self.pointsOfInterest,
         }
 
     def save(self, path: Path) -> None:
@@ -152,7 +158,14 @@ def compile_world(
     # Return existing manifest if present and not forcing a refresh
     if not force_refresh and manifest_path.exists():
         data = json.loads(manifest_path.read_text())
-        return WorldManifest(**{k: data[k] for k in ("id", "created_at", "bbox", "assets", "stats")})
+        return WorldManifest(
+            id=data["id"],
+            created_at=data["created_at"],
+            bbox=data["bbox"],
+            assets=data["assets"],
+            stats=data.get("stats", {}),
+            pointsOfInterest=data.get("pointsOfInterest", []),
+        )
 
     world_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -190,6 +203,13 @@ def compile_world(
         output_path=world_dir / "terrain_features.json",
     )
 
+    # ── 7. POI / landmark extraction ──────────────────────────────────────────
+    poi_records = extract_pois(
+        osm.pois,
+        west, south, east, north,
+        output_path=world_dir / "pois.json",
+    )
+
     elapsed = round(time.time() - t0, 1)
     logger.info("World %s compiled in %.1f s", world_id, elapsed)
 
@@ -204,14 +224,17 @@ def compile_world(
             "heightmap":          "heightmap.json",
             "buildings_physics":  "buildings_physics.json",
             "terrain_features":   "terrain_features.json",
+            "pois":               "pois.json",
         },
         stats={
             "terrain":   terrain.stats,
             "buildings": buildings.stats,
             "roads":     roads.stats,
             "features":  features.summary,
+            "poi_count": len(poi_records),
             "elapsed_s": elapsed,
         },
+        pointsOfInterest=[r.to_dict() for r in poi_records],
     )
     manifest.save(manifest_path)
     return manifest
