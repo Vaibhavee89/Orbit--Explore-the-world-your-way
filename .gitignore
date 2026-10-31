@@ -25,3 +25,10 @@ dist-ssr
 node_modules
 .env
 .env.local
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
