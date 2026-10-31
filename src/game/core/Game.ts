@@ -3,6 +3,8 @@ import { GameLoop } from './GameLoop';
 import { GameRenderer } from '../rendering/Renderer';
 import { SceneManager } from '../rendering/SceneManager';
 import { WorldLoader } from '../world/WorldLoader';
+import { BuildingLoader } from '../world/BuildingLoader';
+import { RoadLoader } from '../world/RoadLoader';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
 export class Game {
@@ -86,8 +88,12 @@ export class Game {
       this._cube = null;
     }
 
-    const loader = new WorldLoader();
-    await loader.load(manifest, this._scene);
+    // Load terrain, buildings, and roads in parallel.
+    await Promise.all([
+      new WorldLoader().load(manifest, this._scene),
+      new BuildingLoader().load(manifest, this._scene),
+      new RoadLoader().load(manifest, this._scene),
+    ]);
 
     // Position camera for a bird's-eye view of the terrain (~1 km² region).
     // ENU metres: terrain spans roughly ±500 m in X/Y; camera at (0, 600, 900).
