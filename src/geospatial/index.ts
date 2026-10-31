@@ -3,3 +3,5 @@ export { OrbitCesiumViewer } from './CesiumViewer';
 export type { CesiumViewerOptions } from './CesiumViewer';
 export { LocationSelector, LocationSelectedEvent } from './LocationSelector';
 export type { GeoResult } from './LocationSelector';
+export { RegionSelector, RegionConfirmedEvent, RegionDrawingEvent } from './RegionSelector';
+export type { BoundingBox, RegionPhase, RegionState } from './RegionSelector';

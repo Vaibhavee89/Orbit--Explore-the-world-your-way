@@ -32,6 +32,9 @@ export class OrbitCesiumViewer {
     this.viewer = viewer;
   }
 
+  /** Raw Cesium Viewer — use for attaching screen-space event handlers etc. */
+  get cesiumViewer(): Viewer { return this.viewer; }
+
   /**
    * Create and mount a Cesium viewer with Google Photorealistic 3D tiles.
    * Globe rendering is disabled; only the tileset provides geometry.
