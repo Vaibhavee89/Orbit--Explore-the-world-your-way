@@ -8,6 +8,7 @@ the .osm_cache is warm).  132 buildings, all Polygons, no height tags
 
 from __future__ import annotations
 
+import json
 import struct
 
 import numpy as np
@@ -34,6 +35,16 @@ def buildings(osm, tmp_path_factory) -> BuildingMesh:
     out = tmp_path_factory.mktemp("buildings") / "manali_buildings.glb"
     return process_buildings(
         osm.buildings, WEST, SOUTH, EAST, NORTH, output_path=out
+    )
+
+
+@pytest.fixture(scope="module")
+def buildings_with_physics(osm, tmp_path_factory) -> BuildingMesh:
+    tmp = tmp_path_factory.mktemp("buildings_phys")
+    return process_buildings(
+        osm.buildings, WEST, SOUTH, EAST, NORTH,
+        output_path=tmp / "manali_buildings.glb",
+        physics_path=tmp / "buildings_physics.json",
     )
 
 
@@ -150,3 +161,56 @@ class TestSpatial:
         verts = np.vstack([g.vertices for g in geoms])
         max_radius = np.hypot(verts[:, 0], verts[:, 1]).max()
         assert max_radius < 2_000, f"Building {max_radius:.0f} m from origin — unexpected"
+
+
+# ── Physics AABB side-channel ─────────────────────────────────────────────────
+
+class TestPhysicsAABB:
+
+    def test_physics_path_returned(self, buildings_with_physics: BuildingMesh):
+        assert buildings_with_physics.physics_path is not None
+        assert buildings_with_physics.physics_path.exists()
+
+    def test_no_physics_path_by_default(self, buildings: BuildingMesh):
+        assert buildings.physics_path is None
+
+    def test_physics_json_is_list(self, buildings_with_physics: BuildingMesh):
+        data = json.loads(buildings_with_physics.physics_path.read_text())
+        assert isinstance(data, list)
+        assert len(data) > 0
+
+    def test_physics_count_matches_buildings(self, buildings_with_physics: BuildingMesh):
+        data = json.loads(buildings_with_physics.physics_path.read_text())
+        assert len(data) == buildings_with_physics.building_count
+
+    def test_physics_record_schema(self, buildings_with_physics: BuildingMesh):
+        data = json.loads(buildings_with_physics.physics_path.read_text())
+        required = {"center_e", "center_n", "center_z", "half_e", "half_n", "half_z"}
+        for record in data:
+            assert required == set(record.keys()), f"Record missing keys: {record}"
+
+    def test_half_extents_positive(self, buildings_with_physics: BuildingMesh):
+        data = json.loads(buildings_with_physics.physics_path.read_text())
+        for rec in data:
+            assert rec["half_e"] > 0
+            assert rec["half_n"] > 0
+            assert rec["half_z"] > 0
+
+    def test_center_z_equals_half_height(self, buildings_with_physics: BuildingMesh):
+        """For uniform 6 m buildings: center_z = half_z = 3.0."""
+        data = json.loads(buildings_with_physics.physics_path.read_text())
+        for rec in data:
+            assert abs(rec["center_z"] - rec["half_z"]) < 0.01
+
+    def test_default_height_gives_3m_half_z(self, buildings_with_physics: BuildingMesh):
+        """Manali buildings default to 6 m → half_z = 3 m."""
+        data = json.loads(buildings_with_physics.physics_path.read_text())
+        for rec in data:
+            assert abs(rec["half_z"] - 3.0) < 0.01
+
+    def test_centers_within_bbox(self, buildings_with_physics: BuildingMesh):
+        """Building centres should lie within 2 km of ENU origin."""
+        data = json.loads(buildings_with_physics.physics_path.read_text())
+        for rec in data:
+            radius = (rec["center_e"] ** 2 + rec["center_n"] ** 2) ** 0.5
+            assert radius < 2_000, f"Building centre {radius:.0f} m from origin"

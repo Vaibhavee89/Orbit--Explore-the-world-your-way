@@ -16,6 +16,7 @@ Coordinate system:
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +44,7 @@ class BuildingMesh:
     building_count: int          # number of extruded prisms
     skipped_count: int           # geometries that could not be extruded
     bbox: tuple[float, float, float, float]   # (west, south, east, north)
+    physics_path: Path | None = None          # path to buildings_physics.json side-channel
     stats: dict[str, Any] = field(default_factory=dict)
 
 
@@ -135,6 +137,7 @@ def process_buildings(
     north: float,
     *,
     output_path: Path | str,
+    physics_path: Path | str | None = None,
     default_height: float = _DEFAULT_HEIGHT,
 ) -> BuildingMesh:
     """
@@ -148,6 +151,9 @@ def process_buildings(
         Bounding box used as context (origin of the ENU frame is the centroid).
     output_path : Path | str
         Destination GLB file.
+    physics_path : Path | str | None
+        Optional destination for ``buildings_physics.json`` — a list of
+        per-building AABB records used to create Rapier cuboid colliders.
     default_height : float
         Fallback height in metres when no OSM height tag is found.
 
@@ -165,6 +171,7 @@ def process_buildings(
     geometries: dict[str, trimesh.Trimesh] = {}
     skipped = 0
     heights: list[float] = []
+    physics_records: list[dict[str, float]] = []
 
     for _, row in buildings_gdf.iterrows():
         geom = row.geometry
@@ -191,6 +198,17 @@ def process_buildings(
             geometries[key] = mesh
             heights.append(height)
 
+            # AABB in ENU space: base at Z=0, top at Z=height.
+            min_e, min_n, max_e, max_n = enu_poly.bounds
+            physics_records.append({
+                "center_e": round((min_e + max_e) / 2, 2),
+                "center_n": round((min_n + max_n) / 2, 2),
+                "center_z": round(height / 2, 2),
+                "half_e":   round((max_e - min_e) / 2, 2),
+                "half_n":   round((max_n - min_n) / 2, 2),
+                "half_z":   round(height / 2, 2),
+            })
+
     if not geometries:
         raise ValueError(
             f"No buildings could be extruded (skipped {skipped}). "
@@ -199,6 +217,12 @@ def process_buildings(
 
     scene = trimesh.Scene(geometries)
     scene.export(str(output_path))
+
+    # Write per-building AABB side-channel for Rapier colliders.
+    phys_path: Path | None = None
+    if physics_path is not None:
+        phys_path = Path(physics_path)
+        phys_path.write_text(json.dumps(physics_records))
 
     h_arr = np.array(heights)
     stats: dict[str, Any] = {
@@ -219,5 +243,6 @@ def process_buildings(
         building_count=len(geometries),
         skipped_count=skipped,
         bbox=(west, south, east, north),
+        physics_path=phys_path,
         stats=stats,
     )

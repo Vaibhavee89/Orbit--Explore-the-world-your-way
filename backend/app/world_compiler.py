@@ -101,6 +101,7 @@ def validate_manifest(data: dict) -> list[str]:
     for asset in ("terrain", "buildings", "roads"):
         if asset not in assets:
             errors.append(f"assets.{asset!r} missing")
+    # heightmap and buildings_physics are optional (added later; old worlds may lack them)
     return errors
 
 
@@ -167,6 +168,7 @@ def compile_world(
         osm.buildings,
         west, south, east, north,
         output_path=world_dir / "buildings.glb",
+        physics_path=world_dir / "buildings_physics.json",
     )
 
     # ── 5. Road graph ─────────────────────────────────────────────────────────
@@ -181,10 +183,11 @@ def compile_world(
         created_at=datetime.now(timezone.utc).isoformat(),
         bbox={"west": west, "south": south, "east": east, "north": north},
         assets={
-            "terrain":   "terrain.glb",
-            "buildings": "buildings.glb",
-            "roads":     "roads.json",
-            "heightmap": "heightmap.json",
+            "terrain":            "terrain.glb",
+            "buildings":          "buildings.glb",
+            "roads":              "roads.json",
+            "heightmap":          "heightmap.json",
+            "buildings_physics":  "buildings_physics.json",
         },
         stats={
             "terrain":   terrain.stats,

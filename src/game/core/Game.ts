@@ -7,6 +7,7 @@ import { BuildingLoader } from '../world/BuildingLoader';
 import { RoadLoader } from '../world/RoadLoader';
 import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { HeightfieldLoader } from '../physics/HeightfieldLoader';
+import { BuildingColliderLoader } from '../physics/BuildingColliderLoader';
 import type { PhysicsBodyHandle } from '../physics/PhysicsWorld';
 import type { Collider } from '@dimforge/rapier3d';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
@@ -160,9 +161,13 @@ export class Game {
         this._testBox = null;
       }
 
-      // Build heightfield and re-drop the test box above terrain.
+      // Build heightfield and building colliders, then re-drop the test box.
       try {
-        const { zMax } = await new HeightfieldLoader().load(manifest, this._physics);
+        const [{ zMax }, buildingCount] = await Promise.all([
+          new HeightfieldLoader().load(manifest, this._physics),
+          new BuildingColliderLoader().load(manifest, this._physics),
+        ]);
+        console.info(`[Game] Building colliders: ${buildingCount}`);
         const dropY = zMax + 50;
         const handle = this._physics.addDynamicBox(0, dropY, 0, 0.5, 0.5, 0.5);
         const boxGeo = new THREE.BoxGeometry(1, 1, 1);
