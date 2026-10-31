@@ -2,13 +2,15 @@ import * as THREE from 'three';
 import { GameLoop } from './GameLoop';
 import { GameRenderer } from '../rendering/Renderer';
 import { SceneManager } from '../rendering/SceneManager';
+import { CameraManager } from '../camera/CameraManager';
+import { InputState } from '../input/InputState';
+import { PlayerCapsule } from '../player/PlayerCapsule';
 import { WorldLoader } from '../world/WorldLoader';
 import { BuildingLoader } from '../world/BuildingLoader';
 import { RoadLoader } from '../world/RoadLoader';
 import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { HeightfieldLoader } from '../physics/HeightfieldLoader';
 import { BuildingColliderLoader } from '../physics/BuildingColliderLoader';
-import type { PhysicsBodyHandle } from '../physics/PhysicsWorld';
 import type { Collider } from '@dimforge/rapier3d';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
@@ -21,10 +23,16 @@ export class Game {
   private _angle    = 0;
   private _resizeObs: ResizeObserver | null = null;
 
+  // Camera + input
+  private _camMgr: CameraManager | null = null;
+  private _input:  InputState | null = null;
+
+  // Player
+  private _player: PlayerCapsule | null = null;
+
   // Physics
   private _physics: PhysicsWorld | null = null;
   private _groundCollider: Collider | null = null;
-  private _testBox: { mesh: THREE.Mesh; body: PhysicsBodyHandle } | null = null;
 
   get running(): boolean { return this._loop.running; }
 
@@ -35,19 +43,31 @@ export class Game {
     this._renderer = new GameRenderer(canvas);
     this._scene    = new SceneManager();
 
-    this._camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 1000);
-    this._camera.position.set(0, 1.5, 4);
-    this._camera.lookAt(0, 0, 0);
+    this._camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 10000);
 
-    // Spinning demo cube
+    // Third-person orbit camera — default radius 12 m, 45° pitch.
+    this._camMgr = new CameraManager(12, Math.PI / 4, 1.0);
+    this._camMgr.bind(canvas);
+
+    // Keyboard input bound to the window so keys work even without canvas focus.
+    this._input = new InputState();
+    this._input.bind(window);
+
+    // Spinning demo cube (removed when loadWorld() is called).
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const mat = new THREE.MeshStandardMaterial({ color: 0xa78bfa, roughness: 0.4, metalness: 0.2 });
     this._cube = new THREE.Mesh(geo, mat);
     this._cube.castShadow = true;
     this._scene.add(this._cube);
 
-    // Floor grid so the cube has a reference plane
+    // Floor grid — reference plane before world loads.
     this._scene.add(new THREE.GridHelper(10, 10, 0x38bdf833, 0x38bdf811));
+
+    // Placeholder capsule, visible immediately at y = 2 (above the flat ground).
+    this._player = new PlayerCapsule(this._scene, 0, 2, 0);
+
+    // Seed camera position so the first frame doesn't flash from origin.
+    this._camMgr.update(this._camera, this._player.position);
 
     this._resizeObs = new ResizeObserver(() => this._onResize(canvas));
     this._resizeObs.observe(canvas.parentElement ?? canvas);
@@ -57,52 +77,32 @@ export class Game {
       (alpha) => this._render(alpha),
     );
 
-    // PhysicsWorld init is synchronous once the WASM module is loaded
-    // (vite-plugin-wasm handles the static import).
     this._initPhysics();
   }
 
   private _initPhysics(): void {
     this._physics = new PhysicsWorld();
     this._physics.timestep = 1 / 60;
-
     // Flat ground plane (y = 0) — replaced by terrain heightfield in loadWorld().
     this._groundCollider = this._physics.addGroundPlane();
-
-    // Visible ground plane in Three.js.
-    const groundGeo = new THREE.PlaneGeometry(20, 20);
-    const groundMat = new THREE.MeshStandardMaterial({ color: 0x334455, roughness: 0.9 });
-    const groundMesh = new THREE.Mesh(groundGeo, groundMat);
-    groundMesh.rotation.x = -Math.PI / 2;
-    groundMesh.receiveShadow = true;
-    this._scene?.add(groundMesh);
-
-    // Dynamic test box dropped from y = 10.
-    const handle = this._physics.addDynamicBox(0, 10, 0, 0.5, 0.5, 0.5);
-    const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-    const boxMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.5 });
-    const boxMesh = new THREE.Mesh(boxGeo, boxMat);
-    boxMesh.castShadow = true;
-    this._scene?.add(boxMesh);
-    this._testBox = { mesh: boxMesh, body: handle };
   }
 
-  private _tick(_dt: number): void {
+  private _tick(dt: number): void {
     // Spinning demo cube (present before world loads).
     if (this._cube) {
-      this._angle += _dt;
+      this._angle += dt;
       this._cube.rotation.y = this._angle;
       this._cube.rotation.x = this._angle * 0.4;
     }
 
-    // Physics step + mesh sync.
-    if (this._physics && this._testBox) {
-      this._physics.step();
-      const t = this._testBox.body.rigidBody.translation();
-      const r = this._testBox.body.rigidBody.rotation();
-      this._testBox.mesh.position.set(t.x, t.y, t.z);
-      this._testBox.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    // WASD-move the player capsule, then orbit camera around it.
+    if (this._player && this._input && this._camMgr && this._camera) {
+      this._player.update(this._input, this._camMgr.yaw, dt);
+      this._camMgr.update(this._camera, this._player.position);
     }
+
+    // Step physics (terrain / building colliders, no character controller yet).
+    this._physics?.step();
   }
 
   private _render(_alpha: number): void {
@@ -123,13 +123,14 @@ export class Game {
   }
 
   /**
-   * Load the terrain GLB from a compiled WorldManifest.
-   * Removes the placeholder cube and repositions the camera for a top-down view.
+   * Load the world from a compiled WorldManifest.
+   * Removes the demo cube, installs terrain + building colliders, and
+   * repositions the player capsule on the terrain surface.
    */
   async loadWorld(manifest: WorldManifest): Promise<void> {
     if (!this._scene) throw new Error('Game not started');
 
-    // Remove demo cube from scene and tick loop.
+    // Remove demo cube.
     if (this._cube) {
       this._scene.remove(this._cube);
       this._cube.geometry.dispose();
@@ -137,58 +138,33 @@ export class Game {
       this._cube = null;
     }
 
-    // Load terrain, buildings, and roads in parallel.
+    // Load visual assets in parallel.
     await Promise.all([
       new WorldLoader().load(manifest, this._scene),
       new BuildingLoader().load(manifest, this._scene),
       new RoadLoader().load(manifest, this._scene),
     ]);
 
-    // Swap flat ground plane → terrain heightfield collider.
+    // Swap flat ground plane → terrain heightfield + building colliders.
     if (this._physics) {
-      // Remove flat placeholder.
       if (this._groundCollider) {
         this._physics.world.removeCollider(this._groundCollider, false);
         this._groundCollider = null;
       }
-      // Remove test box from both physics and scene.
-      if (this._testBox) {
-        this._physics.world.removeCollider(this._testBox.body.collider, false);
-        this._physics.world.removeRigidBody(this._testBox.body.rigidBody);
-        this._scene?.remove(this._testBox.mesh);
-        this._testBox.mesh.geometry.dispose();
-        (this._testBox.mesh.material as THREE.Material).dispose();
-        this._testBox = null;
-      }
 
-      // Build heightfield and building colliders, then re-drop the test box.
       try {
         const [{ zMax }, buildingCount] = await Promise.all([
           new HeightfieldLoader().load(manifest, this._physics),
           new BuildingColliderLoader().load(manifest, this._physics),
         ]);
-        console.info(`[Game] Building colliders: ${buildingCount}`);
-        const dropY = zMax + 50;
-        const handle = this._physics.addDynamicBox(0, dropY, 0, 0.5, 0.5, 0.5);
-        const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-        const boxMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.5 });
-        const boxMesh = new THREE.Mesh(boxGeo, boxMat);
-        boxMesh.castShadow = true;
-        this._scene?.add(boxMesh);
-        this._testBox = { mesh: boxMesh, body: handle };
-        console.info(`[Game] Heightfield loaded; dropping test box from y=${dropY.toFixed(0)}`);
+        console.info(`[Game] Heightfield + ${buildingCount} building colliders loaded`);
+
+        // Place player just above the highest terrain point.
+        this._player?.setPosition(0, zMax + 2, 0);
       } catch (err) {
-        console.error('[Game] Heightfield load failed, keeping flat ground:', err);
+        console.error('[Game] Physics load failed, keeping flat ground:', err);
         this._groundCollider = this._physics.addGroundPlane();
       }
-    }
-
-    // Position camera for a bird's-eye view of the terrain (~1 km² region).
-    // Terrain Y ≈ 1850–2100 m for Manali; look at terrain centre from above.
-    if (this._camera) {
-      this._camera.position.set(0, 2500, 1200);
-      this._camera.lookAt(0, 1950, 0);
-      this._camera.updateProjectionMatrix();
     }
   }
 
@@ -199,12 +175,14 @@ export class Game {
 
   dispose(): void {
     this.stop();
+    this._input?.unbind();
+    this._camMgr?.unbind();
     this._physics?.free();
     this._physics = null;
     this._groundCollider = null;
-    this._testBox = null;
     this._scene?.dispose();
     this._renderer?.dispose();
+    this._player = this._camMgr = this._input = null;
     this._cube = this._camera = this._scene = this._renderer = null;
   }
 }
