@@ -1,14 +1,17 @@
 """
 WorldManifest compiler for Adventure Mode.
 
-Orchestrates P2-03 → P2-04 → P2-05 → P2-06 → P2-07 to produce a self-contained
-world directory:
+Orchestrates P2-03 → P2-04 → P2-05 → P2-06 → P2-07 → P5-01 to produce a
+self-contained world directory:
 
   worlds/<id>/
-    manifest.json   ← schema below
-    terrain.glb     ← 128×128 elevation mesh
-    buildings.glb   ← extruded building prisms
-    roads.json      ← validated ENU road graph
+    manifest.json          ← schema below
+    terrain.glb            ← 128×128 elevation mesh
+    buildings.glb          ← extruded building prisms
+    roads.json             ← validated ENU road graph
+    heightmap.json         ← raw elevation grid for physics
+    buildings_physics.json ← per-building AABB records
+    terrain_features.json  ← slope, difficulty tiles, named features (P5-01)
 
 Manifest schema:
   {
@@ -16,14 +19,19 @@ Manifest schema:
     "created_at": "<ISO-8601 UTC>",
     "bbox": {"west": f, "south": f, "east": f, "north": f},
     "assets": {
-      "terrain":   "terrain.glb",
-      "buildings": "buildings.glb",
-      "roads":     "roads.json"
+      "terrain":           "terrain.glb",
+      "buildings":         "buildings.glb",
+      "roads":             "roads.json",
+      "heightmap":         "heightmap.json",
+      "buildings_physics": "buildings_physics.json",
+      "terrain_features":  "terrain_features.json"
     },
     "stats": {
       "terrain":   {...},
       "buildings": {...},
-      "roads":     {...}
+      "roads":     {...},
+      "features":  {slope summary},
+      "elapsed_s": float
     }
   }
 """
@@ -45,6 +53,7 @@ from app.world_builder.data_fetcher import fetch_osm_data
 from app.world_builder.elevation_fetcher import fetch_elevation
 from app.world_builder.road_processor import build_road_graph
 from app.world_builder.terrain_processor import generate_terrain_mesh
+from app.gameplay.terrain_analyzer import analyze_terrain
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +184,12 @@ def compile_world(
     roads = build_road_graph(osm.roads, west, south, east, north)
     roads.save(world_dir / "roads.json")
 
+    # ── 6. Terrain feature analysis ───────────────────────────────────────────
+    features = analyze_terrain(
+        world_dir / "heightmap.json",
+        output_path=world_dir / "terrain_features.json",
+    )
+
     elapsed = round(time.time() - t0, 1)
     logger.info("World %s compiled in %.1f s", world_id, elapsed)
 
@@ -188,11 +203,13 @@ def compile_world(
             "roads":              "roads.json",
             "heightmap":          "heightmap.json",
             "buildings_physics":  "buildings_physics.json",
+            "terrain_features":   "terrain_features.json",
         },
         stats={
             "terrain":   terrain.stats,
             "buildings": buildings.stats,
             "roads":     roads.stats,
+            "features":  features.summary,
             "elapsed_s": elapsed,
         },
     )
