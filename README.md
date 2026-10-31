@@ -13,6 +13,23 @@
 
 ---
 
+## 🎭 Dual-Mode Experience
+
+Orbit runs in **two coexisting modes**. The existing Travel experience is unchanged; the Adventure experience is being built in parallel on the `feature/real-world-game` branch.
+
+### 🧳 Travel Mode (existing, stable)
+The original AI-powered 3D travel companion — chat with Gemini/OpenAI to explore the world, build a bucket list, and plan multi-stop trips on photorealistic 3D maps. All existing behavior lives in [index.tsx](index.tsx), [map_app.ts](map_app.ts), and [mcp_maps_server.ts](mcp_maps_server.ts). These three files are **protected**: new work must not delete or break them.
+
+### 🗺️ Adventure Mode (in development)
+A real-world exploration game layered on top of the same 3D map. New gameplay code is being added alongside Travel Mode without touching the files above, so `npm run dev` continues to boot the current app at every step of the rollout.
+
+**Ground rules for contributors on `feature/real-world-game`:**
+- Do not delete or rename [index.tsx](index.tsx), [map_app.ts](map_app.ts), or [mcp_maps_server.ts](mcp_maps_server.ts).
+- Add Adventure Mode as new modules/components; wire it in behind a mode switch rather than replacing Travel Mode call sites.
+- `npm run dev` must still boot the current Travel experience after every commit.
+
+---
+
 ## ✨ Features
 
 ### 🗺️ **Immersive 3D Exploration**
