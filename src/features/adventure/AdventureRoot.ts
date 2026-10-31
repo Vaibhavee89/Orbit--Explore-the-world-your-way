@@ -617,7 +617,6 @@ export class AdventureRoot extends LitElement {
           <span>Loading 3D tiles…</span>
         ` : html`
           <span style="color:#f87171">⚠ ${this._errorMsg}</span>
-          <span style="font-size:0.75rem">Check VITE_MAP_TILES_API_KEY in .env</span>
         `}
       </div>
 
@@ -781,20 +780,6 @@ export class AdventureRoot extends LitElement {
     if (!container) return;
     this._container = container;
 
-    const apiKey =
-      (typeof process !== 'undefined' && process.env.VITE_MAP_TILES_API_KEY) ||
-      (typeof process !== 'undefined' && process.env.VITE_GOOGLE_MAPS_API_KEY) ||
-      (typeof process !== 'undefined' && process.env.GOOGLE_MAPS_API_KEY) ||
-      '';
-
-    this._apiKey = apiKey;
-
-    if (!apiKey) {
-      this._status = 'error';
-      this._errorMsg = 'No Google Maps API key found. Set VITE_MAP_TILES_API_KEY in .env';
-      return;
-    }
-
     try {
       // Load history before Cesium init so we know if we have a saved location.
       this._savedLocations = loadLocations();
@@ -802,7 +787,6 @@ export class AdventureRoot extends LitElement {
 
       this._cesium = await OrbitCesiumViewer.create({
         container,
-        googleMapsApiKey: apiKey,
         lat: lastSaved?.center.lat ?? INITIAL_LAT,
         lon: lastSaved?.center.lon ?? INITIAL_LON,
         heightMetres: 1200,
