@@ -243,6 +243,7 @@ Copy `.env.example` to `.env` before running the app. **Never commit `.env`** �
 |---|---|---|---|
 | `GOOGLE_MAPS_API_KEY` | Travel | ✅ | Google Maps JS / Geocoding / Directions / Street View APIs. Create at [console.cloud.google.com](https://console.cloud.google.com/apis/credentials). Enable: Maps JavaScript API, Geocoding API, Directions API, Street View API. |
 | `OPENAI_API_KEY` | Travel | ✅ | OpenAI key for the GPT-4o-mini AI travel assistant. Get one at [platform.openai.com/api-keys](https://platform.openai.com/api-keys). |
+| `VITE_MAP_TILES_API_KEY` | Adventure | ✅ | Restricted Google Maps Tiles API key for Cesium Photorealistic 3D tiles. Create a separate key restricted to **Map Tiles API** only + your HTTP referrers. Verify: `curl "https://tile.googleapis.com/v1/3dtiles/root.json?key=YOUR_KEY"` → 200. Falls back to `VITE_GOOGLE_MAPS_API_KEY` → `GOOGLE_MAPS_API_KEY`. |
 | `VITE_GOOGLE_MAPS_API_KEY` | Adventure | ⚪ | Vite-prefixed alias for the Maps key used by Adventure Mode modules (`import.meta.env.VITE_GOOGLE_MAPS_API_KEY`). Falls back to `GOOGLE_MAPS_API_KEY` if left blank. |
 | `VITE_WORLDBUILDER_API_URL` | Adventure | ⚪ | Base URL for the Worldbuilder backend (geo-fenced quest generation). Leave blank during local dev — the feature is not yet implemented. |
 

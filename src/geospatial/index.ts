@@ -1,2 +1,3 @@
 // Geo utilities: lat/lng ↔ world-space conversion, tile fetching, Cesium bridge
-export {};
+export { OrbitCesiumViewer } from './CesiumViewer';
+export type { CesiumViewerOptions } from './CesiumViewer';
