@@ -23,8 +23,12 @@ export default defineConfig(({ mode }) => {
         }),
       ],
       define: {
+        // Travel Mode keys
         'process.env.OPENAI_API_KEY': JSON.stringify(env.OPENAI_API_KEY),
         'process.env.GOOGLE_MAPS_API_KEY': JSON.stringify(env.GOOGLE_MAPS_API_KEY),
+        // Adventure Mode / shared keys (also accessible as import.meta.env.VITE_*)
+        'process.env.VITE_GOOGLE_MAPS_API_KEY': JSON.stringify(env.VITE_GOOGLE_MAPS_API_KEY ?? env.GOOGLE_MAPS_API_KEY),
+        'process.env.VITE_WORLDBUILDER_API_URL': JSON.stringify(env.VITE_WORLDBUILDER_API_URL ?? ''),
         CESIUM_BASE_URL: JSON.stringify(`/${cesiumBaseUrl}`),
       },
       resolve: {

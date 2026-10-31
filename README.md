@@ -110,10 +110,9 @@ A real-world exploration game layered on top of the same 3D map. New gameplay co
 
 3. **Configure environment variables**
    
-   Create a `.env` file in the root directory:
-   ```env
-   GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
-   GEMINI_API_KEY=your_gemini_api_key_here
+   Copy `.env.example` to `.env` and fill in your keys (see the **Environment Variables** section below):
+   ```bash
+   cp .env.example .env
    ```
 
 4. **Run the development server**
@@ -123,7 +122,9 @@ A real-world exploration game layered on top of the same 3D map. New gameplay co
 
 5. **Open your browser**
    
-   Navigate to `http://localhost:5173` (or the port shown in terminal)
+   Navigate to `http://localhost:3000`
+   - Travel Mode (default): `http://localhost:3000/`
+   - Adventure Mode (preview): `http://localhost:3000/?mode=adventure`
 
 ---
 
@@ -234,6 +235,21 @@ Formula: `Flight + (Accommodation × nights) + (Food × days) + (Activities × d
 
 ---
 
+## 🔑 Environment Variables
+
+Copy `.env.example` to `.env` before running the app. **Never commit `.env`** — it is gitignored.
+
+| Variable | Mode | Required | Description |
+|---|---|---|---|
+| `GOOGLE_MAPS_API_KEY` | Travel | ✅ | Google Maps JS / Geocoding / Directions / Street View APIs. Create at [console.cloud.google.com](https://console.cloud.google.com/apis/credentials). Enable: Maps JavaScript API, Geocoding API, Directions API, Street View API. |
+| `OPENAI_API_KEY` | Travel | ✅ | OpenAI key for the GPT-4o-mini AI travel assistant. Get one at [platform.openai.com/api-keys](https://platform.openai.com/api-keys). |
+| `VITE_GOOGLE_MAPS_API_KEY` | Adventure | ⚪ | Vite-prefixed alias for the Maps key used by Adventure Mode modules (`import.meta.env.VITE_GOOGLE_MAPS_API_KEY`). Falls back to `GOOGLE_MAPS_API_KEY` if left blank. |
+| `VITE_WORLDBUILDER_API_URL` | Adventure | ⚪ | Base URL for the Worldbuilder backend (geo-fenced quest generation). Leave blank during local dev — the feature is not yet implemented. |
+
+> ⚪ = optional / not yet used in production.
+
+---
+
 ## 🌐 API Integration
 
 ### Google Maps APIs Used
@@ -246,7 +262,7 @@ Formula: `Flight + (Accommodation × nights) + (Food × days) + (Activities × d
 ### External APIs
 
 - **Open-Meteo**: Free weather data (no API key required)
-- **Google Gemini**: AI-powered chat and suggestions
+- **OpenAI GPT-4o-mini**: AI-powered chat and suggestions
 
 ---
 
