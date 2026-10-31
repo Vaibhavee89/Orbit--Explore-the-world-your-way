@@ -32,3 +32,6 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+backend/worlds/
+backend/.osm_cache/
+backend/.elevation_cache/

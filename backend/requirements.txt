@@ -9,3 +9,5 @@ trimesh==4.5.3
 numpy==2.1.3
 scipy==1.14.1
 mapbox-earcut==2.1.0
+httpx==0.28.1
+aiofiles==25.1.0
