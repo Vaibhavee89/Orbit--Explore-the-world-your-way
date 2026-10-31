@@ -61,6 +61,9 @@ export class CharacterController {
     return this._body.translation();
   }
 
+  /** The Rapier collider attached to this character (needed for intersection queries). */
+  get collider(): Collider { return this._collider; }
+
   /** True if the character is resting on a surface (from the last update). */
   get isGrounded(): boolean { return this._kcc.computedGrounded(); }
 

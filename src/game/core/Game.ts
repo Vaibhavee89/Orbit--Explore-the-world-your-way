@@ -13,6 +13,8 @@ import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { HeightfieldLoader } from '../physics/HeightfieldLoader';
 import { BuildingColliderLoader } from '../physics/BuildingColliderLoader';
 import { CharacterController } from '../physics/CharacterController';
+import { AssetPlacer } from '../assets/AssetPlacer';
+import { AssetRegistry } from '../assets/AssetRegistry';
 import type { Collider } from '@dimforge/rapier3d';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
@@ -35,9 +37,10 @@ export class Game {
   private _avatar:  Player        | null = null;
 
   // Physics
-  private _physics:        PhysicsWorld      | null = null;
-  private _groundCollider: Collider          | null = null;
+  private _physics:        PhysicsWorld        | null = null;
+  private _groundCollider: Collider            | null = null;
   private _charCtrl:       CharacterController | null = null;
+  private _placer:         AssetPlacer         | null = null;
 
   get running(): boolean { return this._loop.running; }
 
@@ -136,6 +139,11 @@ export class Game {
 
     // Physics step — commits kinematic body position, steps dynamics.
     this._physics?.step();
+
+    // Intersection queries are valid immediately after world.step().
+    if (this._charCtrl && this._placer) {
+      this._placer.checkInteractions(this._charCtrl.collider);
+    }
   }
 
   private _render(_alpha: number): void {
@@ -208,6 +216,25 @@ export class Game {
     this._charCtrl = new CharacterController(this._physics.world, 0, spawnY, 0);
     console.info(`[Game] CharacterController spawned at y=${spawnY.toFixed(0)}`);
 
+    // Create asset placer and spawn a test artifact near world centre.
+    this._placer = new AssetPlacer(this._physics, this._scene);
+    this._placer.onInteract((id, placed) => {
+      // Dispatch a DOM event so UI layers can react without coupling to Game internals.
+      const detail = { assetId: id, enu: placed.enu, worldY: placed.worldY };
+      document.dispatchEvent(new CustomEvent('game:interact', { detail, bubbles: true }));
+      console.info('[Game] Interaction event:', detail);
+    });
+
+    // Spawn the ancient-artifact at ENU (100, 100) — visible on the terrain.
+    // Uses a placeholder sphere if the GLB has not yet been placed at
+    // public/assets/vi3w/artifact/ancient_artifact.glb.
+    try {
+      const artifactEntry = AssetRegistry.default.getAsset('ancient-artifact');
+      await this._placer.place(artifactEntry, 100, 100);
+    } catch (err) {
+      console.warn('[Game] Failed to place test artifact:', err);
+    }
+
     // Load GLB avatar; fall back to capsule on failure.
     try {
       const avatar = await Player.load('/avatar/player.glb', this._scene);
@@ -232,6 +259,8 @@ export class Game {
     this.stop();
     this._input?.unbind();
     this._camMgr?.unbind();
+    this._placer?.dispose();
+    this._placer = null;
     if (this._charCtrl && this._physics) {
       this._charCtrl.free(this._physics.world);
     }
