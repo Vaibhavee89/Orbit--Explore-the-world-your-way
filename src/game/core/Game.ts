@@ -5,6 +5,7 @@ import { SceneManager } from '../rendering/SceneManager';
 import { CameraManager } from '../camera/CameraManager';
 import { InputManager } from '../player/InputManager';
 import { PlayerCapsule } from '../player/PlayerCapsule';
+import { Player } from '../player/Player';
 import { WorldLoader } from '../world/WorldLoader';
 import { BuildingLoader } from '../world/BuildingLoader';
 import { RoadLoader } from '../world/RoadLoader';
@@ -23,18 +24,20 @@ export class Game {
   private _cube:     THREE.Mesh | null = null;
   private _angle    = 0;
   private _resizeObs: ResizeObserver | null = null;
+  private _lastRenderTime = 0;
 
   // Camera + input
   private _camMgr: CameraManager | null = null;
   private _input:  InputManager  | null = null;
 
-  // Player
-  private _player:     PlayerCapsule     | null = null;
-  private _charCtrl:   CharacterController | null = null;
+  // Player — capsule (pre-world / fallback) and GLB avatar (post-world)
+  private _capsule: PlayerCapsule | null = null;
+  private _avatar:  Player        | null = null;
 
   // Physics
-  private _physics:        PhysicsWorld | null = null;
-  private _groundCollider: Collider     | null = null;
+  private _physics:        PhysicsWorld      | null = null;
+  private _groundCollider: Collider          | null = null;
+  private _charCtrl:       CharacterController | null = null;
 
   get running(): boolean { return this._loop.running; }
 
@@ -53,7 +56,7 @@ export class Game {
     this._input = new InputManager();
     this._input.bind(window);
 
-    // Spinning demo cube (removed when loadWorld() is called).
+    // Spinning demo cube (removed in loadWorld).
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const mat = new THREE.MeshStandardMaterial({ color: 0xa78bfa, roughness: 0.4, metalness: 0.2 });
     this._cube = new THREE.Mesh(geo, mat);
@@ -61,16 +64,16 @@ export class Game {
     this._scene.add(this._cube);
     this._scene.add(new THREE.GridHelper(10, 10, 0x38bdf833, 0x38bdf811));
 
-    // Placeholder capsule — directly WASD-moved until CharacterController activates.
-    this._player = new PlayerCapsule(this._scene, 0, 2, 0);
-    this._camMgr.update(this._camera, this._player.position);
+    // Placeholder capsule — WASD-moved until CharacterController + avatar activate.
+    this._capsule = new PlayerCapsule(this._scene, 0, 2, 0);
+    this._camMgr.update(this._camera, this._capsule.position);
 
     this._resizeObs = new ResizeObserver(() => this._onResize(canvas));
     this._resizeObs.observe(canvas.parentElement ?? canvas);
 
     this._loop.start(
       (dt) => this._tick(dt),
-      (_alpha) => this._render(_alpha),
+      (alpha) => this._render(alpha),
     );
 
     this._initPhysics();
@@ -79,7 +82,6 @@ export class Game {
   private _initPhysics(): void {
     this._physics = new PhysicsWorld();
     this._physics.timestep = 1 / 60;
-    // Flat ground plane until the real terrain heightfield is loaded.
     this._groundCollider = this._physics.addGroundPlane();
   }
 
@@ -94,9 +96,8 @@ export class Game {
     const input  = this._input;
     const camMgr = this._camMgr;
     const camera = this._camera;
-    const player = this._player;
 
-    if (this._charCtrl && input && camMgr && camera && player) {
+    if (this._charCtrl && input && camMgr) {
       // Physics-driven movement via KCC.
       const dir  = input.moveDir;
       const jump = input.jumpPressed;
@@ -104,29 +105,47 @@ export class Game {
 
       this._charCtrl.update(dir, camMgr.yaw, jump, input.sprint, dt);
 
-      // Sync mesh from physics body, with facing direction.
       const pos  = this._charCtrl.position;
       const yaw  = camMgr.yaw;
       const fx   = -Math.sin(yaw), fz = -Math.cos(yaw);
       const rx   =  Math.cos(yaw), rz = -Math.sin(yaw);
-      const worldDx = (dir.z * fx + dir.x * rx);
-      const worldDz = (dir.z * fz + dir.x * rz);
-      player.syncFromPhysics(pos, worldDx, worldDz);
-    } else if (player && input && camMgr && camera) {
-      // Pre-world: direct mesh movement.
-      player.update(input, camMgr.yaw, dt);
+      const wDx  = dir.z * fx + dir.x * rx;
+      const wDz  = dir.z * fz + dir.x * rz;
+
+      if (this._avatar) {
+        this._avatar.syncFromPhysics(
+          pos, wDx, wDz,
+          this._charCtrl.horizontalSpeed,
+          this._charCtrl.isGrounded,
+          this._charCtrl.verticalVelocity,
+        );
+        // Tick animation state machine at fixed rate (mixer advances in _render).
+      } else if (this._capsule) {
+        this._capsule.syncFromPhysics(pos, wDx, wDz);
+      }
+    } else if (this._capsule && input && camMgr) {
+      // Pre-world: direct WASD movement.
+      this._capsule.update(input, camMgr.yaw, dt);
     }
 
-    // Camera follows player after either movement path.
-    if (player && camMgr && camera) {
-      camMgr.update(camera, player.position);
+    // Camera follows the active visual.
+    const targetPos = this._avatar?.position ?? this._capsule?.position;
+    if (targetPos && camMgr && camera) {
+      camMgr.update(camera, targetPos);
     }
 
-    // Physics step — applies staged kinematic body positions, steps dynamics.
+    // Physics step — commits kinematic body position, steps dynamics.
     this._physics?.step();
   }
 
   private _render(_alpha: number): void {
+    const now = performance.now() / 1000;
+    if (this._lastRenderTime > 0) {
+      // Advance AnimationMixer with real elapsed time for smooth blending.
+      this._avatar?.updateMixer(now - this._lastRenderTime);
+    }
+    this._lastRenderTime = now;
+
     if (this._renderer && this._scene && this._camera) {
       this._renderer.render(this._scene.scene, this._camera);
     }
@@ -145,8 +164,8 @@ export class Game {
 
   /**
    * Load the world from a compiled WorldManifest.
-   * Removes the demo cube, installs terrain + building colliders,
-   * creates the CharacterController, and places the player on terrain.
+   * Installs terrain + building physics, creates the CharacterController,
+   * and loads the GLB avatar (falls back to capsule if unavailable).
    */
   async loadWorld(manifest: WorldManifest): Promise<void> {
     if (!this._scene || !this._physics) throw new Error('Game not started');
@@ -166,29 +185,41 @@ export class Game {
       new RoadLoader().load(manifest, this._scene),
     ]);
 
-    // Swap flat ground plane → terrain heightfield + building colliders.
+    // Swap flat ground → terrain heightfield + building colliders.
     if (this._groundCollider) {
       this._physics.world.removeCollider(this._groundCollider, false);
       this._groundCollider = null;
     }
 
+    let spawnY = 10; // fallback spawn height
     try {
       const [{ zMax }, buildingCount] = await Promise.all([
         new HeightfieldLoader().load(manifest, this._physics),
         new BuildingColliderLoader().load(manifest, this._physics),
       ]);
       console.info(`[Game] Terrain heightfield + ${buildingCount} building colliders loaded`);
-
-      // Spawn CharacterController above the highest terrain point.
-      const spawnY = zMax + 5;
-      this._charCtrl = new CharacterController(
-        this._physics.world, 0, spawnY, 0,
-      );
-      this._player?.setPosition(0, spawnY, 0);
-      console.info(`[Game] CharacterController spawned at y=${spawnY.toFixed(0)}`);
+      spawnY = zMax + 5;
     } catch (err) {
-      console.error('[Game] Physics load failed, falling back to flat ground:', err);
+      console.error('[Game] Physics load failed, using flat ground:', err);
       this._groundCollider = this._physics.addGroundPlane();
+    }
+
+    // Create kinematic character controller.
+    this._charCtrl = new CharacterController(this._physics.world, 0, spawnY, 0);
+    console.info(`[Game] CharacterController spawned at y=${spawnY.toFixed(0)}`);
+
+    // Load GLB avatar; fall back to capsule on failure.
+    try {
+      const avatar = await Player.load('/avatar/player.glb', this._scene);
+      avatar.setPosition(0, spawnY, 0);
+      // Dispose the capsule — avatar takes over.
+      this._capsule?.dispose(this._scene);
+      this._capsule = null;
+      this._avatar  = avatar;
+      console.info('[Game] GLB avatar active');
+    } catch (err) {
+      this._capsule?.setPosition(0, spawnY, 0);
+      console.warn('[Game] Avatar load failed, keeping capsule:', err);
     }
   }
 
@@ -208,9 +239,14 @@ export class Game {
     this._physics?.free();
     this._physics = null;
     this._groundCollider = null;
+    if (this._scene) {
+      this._avatar?.dispose(this._scene);
+      this._capsule?.dispose(this._scene);
+    }
+    this._avatar = this._capsule = null;
     this._scene?.dispose();
     this._renderer?.dispose();
-    this._player = this._camMgr = this._input = null;
+    this._camMgr = this._input = null;
     this._cube = this._camera = this._scene = this._renderer = null;
   }
 }

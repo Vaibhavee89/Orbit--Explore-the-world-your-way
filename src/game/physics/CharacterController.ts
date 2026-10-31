@@ -29,7 +29,9 @@ export class CharacterController {
   private _kcc:      KinematicCharacterController;
   private _body:     RigidBody;
   private _collider: Collider;
-  private _vertVel   = 0; // accumulated vertical velocity (m/s)
+  private _vertVel        = 0; // accumulated vertical velocity (m/s)
+  private _horizSpeed     = 0; // actual horizontal speed last tick (m/s)
+  private _lastVertVel    = 0; // actual vertical velocity last tick (m/s)
 
   constructor(world: World, x: number, y: number, z: number) {
     // Character controller with small skin offset.
@@ -60,9 +62,13 @@ export class CharacterController {
   }
 
   /** True if the character is resting on a surface (from the last update). */
-  get isGrounded(): boolean {
-    return this._kcc.computedGrounded();
-  }
+  get isGrounded(): boolean { return this._kcc.computedGrounded(); }
+
+  /** Actual horizontal speed after collision response (m/s). Updated by update(). */
+  get horizontalSpeed(): number { return this._horizSpeed; }
+
+  /** Actual vertical velocity after collision response (m/s). Updated by update(). */
+  get verticalVelocity(): number { return this._lastVertVel; }
 
   /**
    * Advance the character by one physics tick.
@@ -114,6 +120,12 @@ export class CharacterController {
       y: pos.y + corrected.y,
       z: pos.z + corrected.z,
     });
+
+    // Record post-collision speed for AnimationController.
+    if (dt > 0) {
+      this._horizSpeed  = Math.hypot(corrected.x, corrected.z) / dt;
+      this._lastVertVel = corrected.y / dt;
+    }
   }
 
   /** Teleport the character to an absolute position and reset vertical velocity. */
