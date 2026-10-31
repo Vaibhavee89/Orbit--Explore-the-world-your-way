@@ -144,7 +144,19 @@ class TestValidateManifest:
         assert any("buildings" in e for e in errors)
 
 
-# ── HTTP endpoint ─────────────────────────────────────────────────────────────
+# ── HTTP endpoint (smoke tests; full suite in test_worlds_api.py) ─────────────
+
+_SELECTED_LOC = {
+    "id": "manali-compiler-test",
+    "label": "Old Manali Road",
+    "box": {
+        "west": WEST, "south": SOUTH, "east": EAST, "north": NORTH,
+        "widthM": 1050.0, "heightM": 1000.0,
+    },
+    "center": {"lat": (SOUTH + NORTH) / 2, "lon": (WEST + EAST) / 2},
+    "savedAt": 1700000000000,
+}
+
 
 @pytest.fixture(scope="module")
 def client():
@@ -152,69 +164,19 @@ def client():
         yield c
 
 
-class TestPostWorlds:
+class TestPostWorldsSmoke:
 
     def test_post_worlds_201(self, client):
-        resp = client.post("/worlds", json={
-            "west": WEST, "south": SOUTH, "east": EAST, "north": NORTH,
-        })
+        resp = client.post("/worlds", json=_SELECTED_LOC)
         assert resp.status_code == 201
 
-    def test_response_has_manifest_url(self, client):
-        resp = client.post("/worlds", json={
-            "west": WEST, "south": SOUTH, "east": EAST, "north": NORTH,
-        })
-        data = resp.json()
-        assert "manifest_url" in data
-        assert data["manifest_url"].endswith("manifest.json")
-
     def test_response_has_id(self, client):
-        resp = client.post("/worlds", json={
-            "west": WEST, "south": SOUTH, "east": EAST, "north": NORTH,
-        })
-        data = resp.json()
-        assert "id" in data
-        assert len(data["id"]) == 16
+        resp = client.post("/worlds", json=_SELECTED_LOC)
+        assert len(resp.json()["id"]) == 16
 
-    def test_response_has_stats(self, client):
-        resp = client.post("/worlds", json={
-            "west": WEST, "south": SOUTH, "east": EAST, "north": NORTH,
-        })
-        data = resp.json()
-        assert "stats" in data
-
-    def test_manifest_url_is_fetchable(self, client):
-        resp = client.post("/worlds", json={
-            "west": WEST, "south": SOUTH, "east": EAST, "north": NORTH,
-        })
-        manifest_url = resp.json()["manifest_url"]
-        manifest_resp = client.get(manifest_url)
-        assert manifest_resp.status_code == 200
-
-    def test_manifest_schema_valid(self, client):
-        resp = client.post("/worlds", json={
-            "west": WEST, "south": SOUTH, "east": EAST, "north": NORTH,
-        })
-        manifest_url = resp.json()["manifest_url"]
-        manifest = client.get(manifest_url).json()
-        errors = validate_manifest(manifest)
-        assert errors == [], f"Manifest invalid: {errors}"
-
-    def test_idempotent_same_id(self, client):
-        r1 = client.post("/worlds", json={
-            "west": WEST, "south": SOUTH, "east": EAST, "north": NORTH,
-        })
-        r2 = client.post("/worlds", json={
-            "west": WEST, "south": SOUTH, "east": EAST, "north": NORTH,
-        })
-        assert r1.json()["id"] == r2.json()["id"]
-
-    def test_invalid_bbox_422(self, client):
-        """west >= east should be rejected."""
-        resp = client.post("/worlds", json={
-            "west": EAST, "south": SOUTH, "east": WEST, "north": NORTH,
-        })
-        assert resp.status_code == 422
+    def test_response_has_asset_urls(self, client):
+        resp = client.post("/worlds", json=_SELECTED_LOC)
+        assert "asset_urls" in resp.json()
 
     def test_healthz_still_works(self, client):
         assert client.get("/healthz").json() == {"status": "ok"}
