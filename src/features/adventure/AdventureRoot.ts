@@ -11,6 +11,7 @@ import { LocationConfirmedEvent } from '../../geospatial/types';
 import { loadLastLocation, loadLocations, saveLocation, removeLocation } from '../../geospatial/locationStorage';
 import { WorldBuilderClient, WorldBuilderError } from '../../geospatial/WorldBuilderClient';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
+import { Game } from '../../game/core/Game';
 
 // Manali, Himachal Pradesh — initial view.
 const INITIAL_LAT = 32.2432;
@@ -33,8 +34,10 @@ export class AdventureRoot extends LitElement {
   @state() private _buildPhase: 'idle' | 'building' | 'done' | 'error' = 'idle';
   @state() private _worldManifest: WorldManifest | null = null;
   @state() private _buildError = '';
+  @state() private _gameRunning = false;
 
   private _cesium: OrbitCesiumViewer | null = null;
+  private _game: Game | null = null;
   private _container: HTMLDivElement | null = null;
   private _apiKey = '';
   private _regionSel: RegionSelector | null = null;
@@ -355,6 +358,50 @@ export class AdventureRoot extends LitElement {
         margin-right: 2px;
       }
       .rs-build-btn:disabled { opacity: 0.6; cursor: default; transform: none; }
+      .wb-enter-btn {
+        margin-top: 6px;
+        width: 100%;
+        background: linear-gradient(135deg, #a78bfa, #38bdf8);
+        color: #0a0a1a;
+        border: none;
+        border-radius: 6px;
+        padding: 6px 0;
+        font-size: 0.8rem;
+        font-family: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        letter-spacing: 0.03em;
+        transition: opacity 0.15s;
+      }
+      .wb-enter-btn:hover { opacity: 0.88; }
+      /* ── Game overlay ── */
+      .game-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 100;
+      }
+      .game-overlay.hidden { display: none; }
+      .game-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .game-exit-btn {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        background: rgba(10,10,26,0.8);
+        backdrop-filter: blur(6px);
+        border: 1px solid #f8717144;
+        color: #f87171;
+        font-size: 0.8rem;
+        font-family: inherit;
+        padding: 6px 14px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .game-exit-btn:hover { background: #f8717122; }
       .rs-build-btn {
         flex: 1;
         background: linear-gradient(135deg, #a78bfa, #38bdf8);
@@ -533,6 +580,9 @@ export class AdventureRoot extends LitElement {
                     ID: ${this._worldManifest.id}<br>
                     Terrain · Buildings · Roads
                   </div>
+                  <button class="wb-enter-btn" @click=${this._startGame}>
+                    ▶ Enter World
+                  </button>
                 </div>
               ` : ''}
 
@@ -553,6 +603,12 @@ export class AdventureRoot extends LitElement {
             </div>
           ` : ''}
         ` : ''}
+      </div>
+
+      <!-- Three.js game canvas — covers screen when game is running -->
+      <div class="game-overlay ${this._gameRunning ? '' : 'hidden'}">
+        <canvas id="adv-game" class="game-canvas"></canvas>
+        <button class="game-exit-btn" @click=${this._exitGame}>✕ Exit</button>
       </div>
 
       <div class="adv-overlay ${this._status !== 'loading' && this._status !== 'error' ? 'hidden' : ''}">
@@ -697,6 +753,23 @@ export class AdventureRoot extends LitElement {
     }
   }
 
+  private _startGame() {
+    this._gameRunning = true;
+    // Wait for the canvas element to be in the DOM after state update.
+    requestAnimationFrame(() => {
+      const canvas = this.querySelector<HTMLCanvasElement>('#adv-game');
+      if (!canvas) return;
+      this._game = new Game();
+      this._game.start(canvas);
+    });
+  }
+
+  private _exitGame() {
+    this._game?.dispose();
+    this._game = null;
+    this._gameRunning = false;
+  }
+
   async firstUpdated() {
     const container = this.querySelector<HTMLDivElement>('#adv-cesium');
     if (!container) return;
@@ -745,6 +818,8 @@ export class AdventureRoot extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    this._game?.dispose();
+    this._game = null;
     this._regionSel?.destroy();
     this._regionSel = null;
     this._cesium?.destroy();

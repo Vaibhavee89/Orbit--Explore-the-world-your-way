@@ -1,2 +1,2 @@
-// THREE.WebGLRenderer setup, post-processing, LOD
-export {};
+export { GameRenderer } from './Renderer';
+export { SceneManager } from './SceneManager';
