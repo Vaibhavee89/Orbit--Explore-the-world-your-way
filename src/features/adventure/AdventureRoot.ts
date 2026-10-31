@@ -754,6 +754,7 @@ export class AdventureRoot extends LitElement {
   }
 
   private _startGame() {
+    const manifest = this._worldManifest;
     this._gameRunning = true;
     // Wait for the canvas element to be in the DOM after state update.
     requestAnimationFrame(() => {
@@ -761,6 +762,11 @@ export class AdventureRoot extends LitElement {
       if (!canvas) return;
       this._game = new Game();
       this._game.start(canvas);
+      if (manifest) {
+        this._game.loadWorld(manifest).catch(err =>
+          console.error('[AdventureRoot] loadWorld failed:', err),
+        );
+      }
     });
   }
 

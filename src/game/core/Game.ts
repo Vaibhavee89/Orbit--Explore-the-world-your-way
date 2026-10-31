@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { GameLoop } from './GameLoop';
 import { GameRenderer } from '../rendering/Renderer';
 import { SceneManager } from '../rendering/SceneManager';
+import { WorldLoader } from '../world/WorldLoader';
+import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
 export class Game {
   private _loop     = new GameLoop();
@@ -65,6 +67,33 @@ export class Game {
     this._renderer?.resize(w, h);
     if (this._camera) {
       this._camera.aspect = w / h;
+      this._camera.updateProjectionMatrix();
+    }
+  }
+
+  /**
+   * Load the terrain GLB from a compiled WorldManifest.
+   * Removes the placeholder cube and repositions the camera for a top-down view.
+   */
+  async loadWorld(manifest: WorldManifest): Promise<void> {
+    if (!this._scene) throw new Error('Game not started');
+
+    // Remove demo cube from scene and tick loop.
+    if (this._cube) {
+      this._scene.remove(this._cube);
+      this._cube.geometry.dispose();
+      (this._cube.material as THREE.Material).dispose();
+      this._cube = null;
+    }
+
+    const loader = new WorldLoader();
+    await loader.load(manifest, this._scene);
+
+    // Position camera for a bird's-eye view of the terrain (~1 km² region).
+    // ENU metres: terrain spans roughly ±500 m in X/Y; camera at (0, 600, 900).
+    if (this._camera) {
+      this._camera.position.set(0, 600, 900);
+      this._camera.lookAt(0, 0, 0);
       this._camera.updateProjectionMatrix();
     }
   }

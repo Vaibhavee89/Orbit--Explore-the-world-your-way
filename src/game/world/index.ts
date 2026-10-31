@@ -1,2 +1,2 @@
-// World chunks, landmark spawning, collectible placement
-export {};
+export { WorldLoader } from './WorldLoader';
+export type { WorldAssets } from './WorldLoader';
