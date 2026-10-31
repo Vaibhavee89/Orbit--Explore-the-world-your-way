@@ -26,3 +26,18 @@ export interface SelectedLocation {
   /** Unix timestamp (ms) when the user confirmed this selection. */
   savedAt: number;
 }
+
+/**
+ * Fired on <orbit-adventure-root> when the user clicks "Confirm & Build World".
+ * Phase 2 handler replaces the no-op; the event contract is stable.
+ */
+export class LocationConfirmedEvent extends CustomEvent<SelectedLocation> {
+  static readonly TYPE = 'location-confirmed' as const;
+  constructor(location: SelectedLocation) {
+    super(LocationConfirmedEvent.TYPE, {
+      detail: location,
+      bubbles: true,
+      composed: true,
+    });
+  }
+}

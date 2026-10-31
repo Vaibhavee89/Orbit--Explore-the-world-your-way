@@ -7,6 +7,7 @@ import '../../geospatial/LocationSelector';
 import { RegionSelector } from '../../geospatial/RegionSelector';
 import type { RegionPhase } from '../../geospatial/RegionSelector';
 import type { BoundingBox, SelectedLocation } from '../../geospatial/types';
+import { LocationConfirmedEvent } from '../../geospatial/types';
 import { loadLastLocation, loadLocations, saveLocation, removeLocation } from '../../geospatial/locationStorage';
 
 // Manali, Himachal Pradesh — initial view.
@@ -305,6 +306,22 @@ export class AdventureRoot extends LitElement {
         font-family: inherit;
       }
       .rs-new-btn:hover { background: #38bdf822; }
+      .rs-build-btn {
+        flex: 1;
+        background: linear-gradient(135deg, #a78bfa, #38bdf8);
+        color: #0a0a1a;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 0;
+        font-size: 0.85rem;
+        font-family: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        letter-spacing: 0.02em;
+        transition: opacity 0.15s, transform 0.1s;
+      }
+      .rs-build-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+      .rs-build-btn:active { transform: translateY(0); }
 
       /* ── History panel ── */
       .hist-btn {
@@ -457,6 +474,9 @@ export class AdventureRoot extends LitElement {
               </div>
               <div class="rs-result-actions">
                 <button class="rs-new-btn" @click=${this._startRegion}>Draw new</button>
+                <button class="rs-build-btn" @click=${this._onBuildWorld}>
+                  🌍 Confirm &amp; Build World
+                </button>
               </div>
             </div>
           ` : ''}
@@ -560,6 +580,45 @@ export class AdventureRoot extends LitElement {
     removeLocation(id);
     this._savedLocations = loadLocations();
     if (this._savedLocations.length === 0) this._showHistory = false;
+  }
+
+  /**
+   * "Confirm & Build World" handler.
+   * Fires LocationConfirmedEvent with the active SelectedLocation.
+   * Phase 2 will replace the no-op body below with world-generation logic.
+   */
+  private _onBuildWorld() {
+    if (!this._regionBox) return;
+
+    // Build a SelectedLocation from the current box + label.
+    // If this exact region was already saved we reuse its id; otherwise we
+    // create a transient one so the event payload is always a full object.
+    const existing = this._savedLocations.find(
+      l => l.box.north === this._regionBox!.north &&
+           l.box.south === this._regionBox!.south &&
+           l.box.east  === this._regionBox!.east  &&
+           l.box.west  === this._regionBox!.west,
+    );
+
+    const location: SelectedLocation = existing ?? {
+      id: crypto.randomUUID(),
+      label: this._currentLocation,
+      box: this._regionBox,
+      center: {
+        lat: (this._regionBox.north + this._regionBox.south) / 2,
+        lon: (this._regionBox.east  + this._regionBox.west)  / 2,
+      },
+      savedAt: Date.now(),
+    };
+
+    // Dispatch the event — Phase 2 listeners handle the actual world build.
+    this.dispatchEvent(new LocationConfirmedEvent(location));
+
+    // No-op placeholder: log to console so the handoff contract is visible.
+    console.info(
+      '[AdventureRoot] onLocationConfirmed (no-op) →',
+      JSON.stringify(location, null, 2),
+    );
   }
 
   async firstUpdated() {

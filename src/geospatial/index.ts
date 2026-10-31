@@ -1,5 +1,6 @@
 // Geo utilities: lat/lng ↔ world-space conversion, tile fetching, Cesium bridge
 export type { BoundingBox, SelectedLocation } from './types';
+export { LocationConfirmedEvent } from './types';
 export { OrbitCesiumViewer } from './CesiumViewer';
 export type { CesiumViewerOptions } from './CesiumViewer';
 export { LocationSelector, LocationSelectedEvent } from './LocationSelector';
