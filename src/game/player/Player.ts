@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { AnimationController, type AnimState } from './AnimationController';
+import type { ClipAliases } from './CharacterLibrary';
 import type { SceneManager } from '../rendering/SceneManager';
 
 // Capsule geometry constants (must match CharacterController and PlayerCapsule).
@@ -17,8 +18,14 @@ const CLIP_CANDIDATES: Record<AnimState, string[]> = {
   fall: ['fall', 'Fall', 'FALL', 'Falling',  'jump_fall'],
 };
 
-function _findClip(clips: THREE.AnimationClip[], state: AnimState): THREE.AnimationClip | null {
-  for (const name of CLIP_CANDIDATES[state]) {
+function _findClip(
+  clips:     THREE.AnimationClip[],
+  state:     AnimState,
+  overrides: ClipAliases = {},
+): THREE.AnimationClip | null {
+  // Per-character overrides take priority over the global candidates.
+  const candidates = [...(overrides[state] ?? []), ...CLIP_CANDIDATES[state]];
+  for (const name of candidates) {
     const clip = clips.find(c => c.name.toLowerCase() === name.toLowerCase());
     if (clip) return clip;
   }
@@ -101,8 +108,18 @@ export class Player {
   /**
    * Async factory — loads a GLTF file and returns a ready Player.
    * Throws if the network request fails; let the caller fall back to the capsule.
+   *
+   * @param url          Path to the GLB file.
+   * @param scene        Scene to add the avatar root to.
+   * @param clipAliases  Per-character clip name overrides (from CharacterLibrary).
+   * @param label        Optional label for log messages (character id).
    */
-  static async load(url: string, scene: SceneManager): Promise<Player> {
+  static async load(
+    url:          string,
+    scene:        SceneManager,
+    clipAliases:  ClipAliases = {},
+    label         = url,
+  ): Promise<Player> {
     const loader = new GLTFLoader();
     const gltf   = await loader.loadAsync(url);
     const root   = gltf.scene as THREE.Group;
@@ -124,16 +141,16 @@ export class Player {
 
     scene.add(root);
 
-    // Build animation map.
-    const mixer  = new THREE.AnimationMixer(root);
+    // Build animation map — per-character overrides take priority over defaults.
+    const mixer   = new THREE.AnimationMixer(root);
     const clipMap = new Map<AnimState, THREE.AnimationAction>();
     for (const state of ['idle', 'walk', 'run', 'jump', 'fall'] as AnimState[]) {
-      const clip = _findClip(gltf.animations, state);
+      const clip = _findClip(gltf.animations, state, clipAliases);
       if (clip) {
         clipMap.set(state, mixer.clipAction(clip));
-        console.info(`[Player] clip "${state}" ← "${clip.name}"`);
+        console.info(`[Player] "${label}" clip "${state}" ← "${clip.name}"`);
       } else {
-        console.warn(`[Player] no clip found for state "${state}"`);
+        console.warn(`[Player] "${label}" no clip for state "${state}" (will use fallback)`);
       }
     }
 

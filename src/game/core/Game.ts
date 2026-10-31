@@ -17,6 +17,7 @@ import { AssetPlacer } from '../assets/AssetPlacer';
 import { AssetRegistry } from '../assets/AssetRegistry';
 import { Inventory } from '../inventory/Inventory';
 import { InteractionPrompt } from '../ui/InteractionPrompt';
+import { CharacterLibrary } from '../player/CharacterLibrary';
 import type { Collider } from '@dimforge/rapier3d';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
@@ -42,9 +43,10 @@ export class Game {
   private _physics:        PhysicsWorld        | null = null;
   private _groundCollider: Collider            | null = null;
   private _charCtrl:       CharacterController | null = null;
-  private _placer:         AssetPlacer         | null = null;
-  private _inventory      = new Inventory();
-  private _prompt:         InteractionPrompt   | null = null;
+  private _placer:            AssetPlacer         | null = null;
+  private _inventory         = new Inventory();
+  private _prompt:            InteractionPrompt   | null = null;
+  private _activeCharacterId = 'soldier';
 
   get running(): boolean { return this._loop.running; }
 
@@ -247,18 +249,52 @@ export class Game {
       console.warn('[Game] Failed to place test artifact:', err);
     }
 
-    // Load GLB avatar; fall back to capsule on failure.
+    // Load GLB avatar using the active character from the library.
+    await this._loadAvatar(this._activeCharacterId, spawnY);
+  }
+
+  /**
+   * Switch the active player avatar at runtime.
+   * The current avatar is disposed and replaced with the requested character.
+   * Falls back silently if the GLB is unavailable (character not yet downloaded).
+   */
+  async setCharacter(id: string): Promise<void> {
+    if (!this._scene) throw new Error('Game not started');
+    const spawnY = this._charCtrl
+      ? this._charCtrl.position.y
+      : (this._capsule?.position.y ?? 5);
+    this._activeCharacterId = id;
+    await this._loadAvatar(id, spawnY);
+  }
+
+  /** Current character library entry id. */
+  get activeCharacterId(): string { return this._activeCharacterId; }
+
+  private async _loadAvatar(id: string, spawnY: number): Promise<void> {
+    if (!this._scene) return;
+    let entry;
     try {
-      const avatar = await Player.load('/avatar/player.glb', this._scene);
+      entry = CharacterLibrary.default.getCharacter(id);
+    } catch {
+      console.warn(`[Game] Unknown character "${id}", keeping current avatar`);
+      return;
+    }
+
+    try {
+      const avatar = await Player.load(entry.url, this._scene, entry.clipAliases ?? {}, id);
       avatar.setPosition(0, spawnY, 0);
-      // Dispose the capsule — avatar takes over.
+      // Dispose old avatar; capsule stays hidden until next loadWorld if avatar fails.
+      this._avatar?.dispose(this._scene);
       this._capsule?.dispose(this._scene);
       this._capsule = null;
       this._avatar  = avatar;
-      console.info('[Game] GLB avatar active');
+      console.info(`[Game] Avatar active: "${id}"`);
     } catch (err) {
-      this._capsule?.setPosition(0, spawnY, 0);
-      console.warn('[Game] Avatar load failed, keeping capsule:', err);
+      if (!this._avatar) {
+        // No avatar yet — keep the capsule as fallback.
+        this._capsule?.setPosition(0, spawnY, 0);
+      }
+      console.warn(`[Game] Avatar load failed for "${id}":`, err);
     }
   }
 
