@@ -18,6 +18,7 @@ import { AssetRegistry } from '../assets/AssetRegistry';
 import { Inventory } from '../inventory/Inventory';
 import { InteractionPrompt } from '../ui/InteractionPrompt';
 import { CharacterLibrary } from '../player/CharacterLibrary';
+import { getSavedCharacter } from '../ui/AvatarPicker';
 import type { Collider } from '@dimforge/rapier3d';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
@@ -46,11 +47,15 @@ export class Game {
   private _placer:            AssetPlacer         | null = null;
   private _inventory         = new Inventory();
   private _prompt:            InteractionPrompt   | null = null;
+  // Initialised in start() from localStorage; falls back to 'soldier'.
   private _activeCharacterId = 'soldier';
 
   get running(): boolean { return this._loop.running; }
 
   start(canvas: HTMLCanvasElement): void {
+    // Restore character choice persisted by AvatarPicker.
+    this._activeCharacterId = getSavedCharacter();
+
     const w = canvas.clientWidth  || canvas.width  || 800;
     const h = canvas.clientHeight || canvas.height || 600;
 
