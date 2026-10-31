@@ -1,17 +1,15 @@
 import * as THREE from 'three';
 import type { SceneManager } from '../rendering/SceneManager';
-import type { InputState } from '../input/InputState';
+import type { InputManager } from './InputManager';
 
-const SPEED = 8; // m/s
+const SPEED = 8; // m/s (direct-movement fallback, pre-world)
 
 /**
- * Visual placeholder for the player character.
+ * Visual representation of the player character.
  *
- * Moves with WASD/arrow keys in camera-forward space; no physics yet —
- * the character controller ticket wires this to a Rapier kinematic body.
- *
- * Movement directions relative to camera yaw (theta):
- *   forward = (-sin θ, 0, -cos θ)   right = (cos θ, 0, -sin θ)
+ * Pre-world (no CharacterController): moves directly via WASD.
+ * Post-world: position is driven by CharacterController; Game.ts calls
+ * syncFromPhysics() each tick instead of update().
  */
 export class PlayerCapsule {
   readonly mesh: THREE.Mesh;
@@ -35,21 +33,39 @@ export class PlayerCapsule {
     this.mesh.position.set(x, y, z);
   }
 
-  update(input: InputState, cameraYaw: number, dt: number): void {
-    const forward = new THREE.Vector3(-Math.sin(cameraYaw), 0, -Math.cos(cameraYaw));
-    const right   = new THREE.Vector3( Math.cos(cameraYaw), 0, -Math.sin(cameraYaw));
-    const move    = new THREE.Vector3();
+  /**
+   * Direct WASD movement (used before CharacterController is active).
+   * Moves the mesh in camera-relative XZ space and turns it to face travel.
+   */
+  update(input: InputManager, cameraYaw: number, dt: number): void {
+    const dir = input.moveDir;
+    if (dir.x === 0 && dir.z === 0) return;
 
-    if (input.isDown('KeyW') || input.isDown('ArrowUp'))    move.add(forward);
-    if (input.isDown('KeyS') || input.isDown('ArrowDown'))  move.sub(forward);
-    if (input.isDown('KeyD') || input.isDown('ArrowRight')) move.add(right);
-    if (input.isDown('KeyA') || input.isDown('ArrowLeft'))  move.sub(right);
+    const fx = -Math.sin(cameraYaw);
+    const fz = -Math.cos(cameraYaw);
+    const rx =  Math.cos(cameraYaw);
+    const rz = -Math.sin(cameraYaw);
 
-    if (move.lengthSq() > 0) {
-      move.normalize().multiplyScalar(SPEED * dt);
-      this.mesh.position.add(move);
-      // Face the direction of travel.
-      this.mesh.rotation.y = Math.atan2(move.x, move.z);
+    const wx = (dir.z * fx + dir.x * rx) * SPEED * dt;
+    const wz = (dir.z * fz + dir.x * rz) * SPEED * dt;
+
+    this.mesh.position.x += wx;
+    this.mesh.position.z += wz;
+    this.mesh.rotation.y = Math.atan2(wx, wz);
+  }
+
+  /**
+   * Sync mesh position (and facing) from the CharacterController.
+   * Called each tick once the physics controller is active.
+   */
+  syncFromPhysics(
+    pos: { x: number; y: number; z: number },
+    worldDx: number,
+    worldDz: number,
+  ): void {
+    this.mesh.position.set(pos.x, pos.y, pos.z);
+    if (Math.abs(worldDx) > 0.001 || Math.abs(worldDz) > 0.001) {
+      this.mesh.rotation.y = Math.atan2(worldDx, worldDz);
     }
   }
 

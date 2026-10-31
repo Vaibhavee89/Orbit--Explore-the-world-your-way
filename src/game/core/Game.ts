@@ -3,7 +3,7 @@ import { GameLoop } from './GameLoop';
 import { GameRenderer } from '../rendering/Renderer';
 import { SceneManager } from '../rendering/SceneManager';
 import { CameraManager } from '../camera/CameraManager';
-import { InputState } from '../input/InputState';
+import { InputManager } from '../player/InputManager';
 import { PlayerCapsule } from '../player/PlayerCapsule';
 import { WorldLoader } from '../world/WorldLoader';
 import { BuildingLoader } from '../world/BuildingLoader';
@@ -11,6 +11,7 @@ import { RoadLoader } from '../world/RoadLoader';
 import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { HeightfieldLoader } from '../physics/HeightfieldLoader';
 import { BuildingColliderLoader } from '../physics/BuildingColliderLoader';
+import { CharacterController } from '../physics/CharacterController';
 import type { Collider } from '@dimforge/rapier3d';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
@@ -25,14 +26,15 @@ export class Game {
 
   // Camera + input
   private _camMgr: CameraManager | null = null;
-  private _input:  InputState | null = null;
+  private _input:  InputManager  | null = null;
 
   // Player
-  private _player: PlayerCapsule | null = null;
+  private _player:     PlayerCapsule     | null = null;
+  private _charCtrl:   CharacterController | null = null;
 
   // Physics
-  private _physics: PhysicsWorld | null = null;
-  private _groundCollider: Collider | null = null;
+  private _physics:        PhysicsWorld | null = null;
+  private _groundCollider: Collider     | null = null;
 
   get running(): boolean { return this._loop.running; }
 
@@ -45,12 +47,10 @@ export class Game {
 
     this._camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 10000);
 
-    // Third-person orbit camera — default radius 12 m, 45° pitch.
     this._camMgr = new CameraManager(12, Math.PI / 4, 1.0);
     this._camMgr.bind(canvas);
 
-    // Keyboard input bound to the window so keys work even without canvas focus.
-    this._input = new InputState();
+    this._input = new InputManager();
     this._input.bind(window);
 
     // Spinning demo cube (removed when loadWorld() is called).
@@ -59,14 +59,10 @@ export class Game {
     this._cube = new THREE.Mesh(geo, mat);
     this._cube.castShadow = true;
     this._scene.add(this._cube);
-
-    // Floor grid — reference plane before world loads.
     this._scene.add(new THREE.GridHelper(10, 10, 0x38bdf833, 0x38bdf811));
 
-    // Placeholder capsule, visible immediately at y = 2 (above the flat ground).
+    // Placeholder capsule — directly WASD-moved until CharacterController activates.
     this._player = new PlayerCapsule(this._scene, 0, 2, 0);
-
-    // Seed camera position so the first frame doesn't flash from origin.
     this._camMgr.update(this._camera, this._player.position);
 
     this._resizeObs = new ResizeObserver(() => this._onResize(canvas));
@@ -74,7 +70,7 @@ export class Game {
 
     this._loop.start(
       (dt) => this._tick(dt),
-      (alpha) => this._render(alpha),
+      (_alpha) => this._render(_alpha),
     );
 
     this._initPhysics();
@@ -83,25 +79,50 @@ export class Game {
   private _initPhysics(): void {
     this._physics = new PhysicsWorld();
     this._physics.timestep = 1 / 60;
-    // Flat ground plane (y = 0) — replaced by terrain heightfield in loadWorld().
+    // Flat ground plane until the real terrain heightfield is loaded.
     this._groundCollider = this._physics.addGroundPlane();
   }
 
   private _tick(dt: number): void {
-    // Spinning demo cube (present before world loads).
+    // Demo cube spins until world loads.
     if (this._cube) {
       this._angle += dt;
       this._cube.rotation.y = this._angle;
       this._cube.rotation.x = this._angle * 0.4;
     }
 
-    // WASD-move the player capsule, then orbit camera around it.
-    if (this._player && this._input && this._camMgr && this._camera) {
-      this._player.update(this._input, this._camMgr.yaw, dt);
-      this._camMgr.update(this._camera, this._player.position);
+    const input  = this._input;
+    const camMgr = this._camMgr;
+    const camera = this._camera;
+    const player = this._player;
+
+    if (this._charCtrl && input && camMgr && camera && player) {
+      // Physics-driven movement via KCC.
+      const dir  = input.moveDir;
+      const jump = input.jumpPressed;
+      if (jump) input.consumeJump();
+
+      this._charCtrl.update(dir, camMgr.yaw, jump, input.sprint, dt);
+
+      // Sync mesh from physics body, with facing direction.
+      const pos  = this._charCtrl.position;
+      const yaw  = camMgr.yaw;
+      const fx   = -Math.sin(yaw), fz = -Math.cos(yaw);
+      const rx   =  Math.cos(yaw), rz = -Math.sin(yaw);
+      const worldDx = (dir.z * fx + dir.x * rx);
+      const worldDz = (dir.z * fz + dir.x * rz);
+      player.syncFromPhysics(pos, worldDx, worldDz);
+    } else if (player && input && camMgr && camera) {
+      // Pre-world: direct mesh movement.
+      player.update(input, camMgr.yaw, dt);
     }
 
-    // Step physics (terrain / building colliders, no character controller yet).
+    // Camera follows player after either movement path.
+    if (player && camMgr && camera) {
+      camMgr.update(camera, player.position);
+    }
+
+    // Physics step — applies staged kinematic body positions, steps dynamics.
     this._physics?.step();
   }
 
@@ -124,11 +145,11 @@ export class Game {
 
   /**
    * Load the world from a compiled WorldManifest.
-   * Removes the demo cube, installs terrain + building colliders, and
-   * repositions the player capsule on the terrain surface.
+   * Removes the demo cube, installs terrain + building colliders,
+   * creates the CharacterController, and places the player on terrain.
    */
   async loadWorld(manifest: WorldManifest): Promise<void> {
-    if (!this._scene) throw new Error('Game not started');
+    if (!this._scene || !this._physics) throw new Error('Game not started');
 
     // Remove demo cube.
     if (this._cube) {
@@ -146,25 +167,28 @@ export class Game {
     ]);
 
     // Swap flat ground plane → terrain heightfield + building colliders.
-    if (this._physics) {
-      if (this._groundCollider) {
-        this._physics.world.removeCollider(this._groundCollider, false);
-        this._groundCollider = null;
-      }
+    if (this._groundCollider) {
+      this._physics.world.removeCollider(this._groundCollider, false);
+      this._groundCollider = null;
+    }
 
-      try {
-        const [{ zMax }, buildingCount] = await Promise.all([
-          new HeightfieldLoader().load(manifest, this._physics),
-          new BuildingColliderLoader().load(manifest, this._physics),
-        ]);
-        console.info(`[Game] Heightfield + ${buildingCount} building colliders loaded`);
+    try {
+      const [{ zMax }, buildingCount] = await Promise.all([
+        new HeightfieldLoader().load(manifest, this._physics),
+        new BuildingColliderLoader().load(manifest, this._physics),
+      ]);
+      console.info(`[Game] Terrain heightfield + ${buildingCount} building colliders loaded`);
 
-        // Place player just above the highest terrain point.
-        this._player?.setPosition(0, zMax + 2, 0);
-      } catch (err) {
-        console.error('[Game] Physics load failed, keeping flat ground:', err);
-        this._groundCollider = this._physics.addGroundPlane();
-      }
+      // Spawn CharacterController above the highest terrain point.
+      const spawnY = zMax + 5;
+      this._charCtrl = new CharacterController(
+        this._physics.world, 0, spawnY, 0,
+      );
+      this._player?.setPosition(0, spawnY, 0);
+      console.info(`[Game] CharacterController spawned at y=${spawnY.toFixed(0)}`);
+    } catch (err) {
+      console.error('[Game] Physics load failed, falling back to flat ground:', err);
+      this._groundCollider = this._physics.addGroundPlane();
     }
   }
 
@@ -177,6 +201,10 @@ export class Game {
     this.stop();
     this._input?.unbind();
     this._camMgr?.unbind();
+    if (this._charCtrl && this._physics) {
+      this._charCtrl.free(this._physics.world);
+    }
+    this._charCtrl = null;
     this._physics?.free();
     this._physics = null;
     this._groundCollider = null;
