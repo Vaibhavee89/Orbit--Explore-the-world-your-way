@@ -15,6 +15,8 @@ import { BuildingColliderLoader } from '../physics/BuildingColliderLoader';
 import { CharacterController } from '../physics/CharacterController';
 import { AssetPlacer } from '../assets/AssetPlacer';
 import { AssetRegistry } from '../assets/AssetRegistry';
+import { Inventory } from '../inventory/Inventory';
+import { InteractionPrompt } from '../ui/InteractionPrompt';
 import type { Collider } from '@dimforge/rapier3d';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
@@ -41,6 +43,8 @@ export class Game {
   private _groundCollider: Collider            | null = null;
   private _charCtrl:       CharacterController | null = null;
   private _placer:         AssetPlacer         | null = null;
+  private _inventory      = new Inventory();
+  private _prompt:         InteractionPrompt   | null = null;
 
   get running(): boolean { return this._loop.running; }
 
@@ -70,6 +74,11 @@ export class Game {
     // Placeholder capsule — WASD-moved until CharacterController + avatar activate.
     this._capsule = new PlayerCapsule(this._scene, 0, 2, 0);
     this._camMgr.update(this._camera, this._capsule.position);
+
+    // HUD prompt — mounts inside the canvas container so it's positioned relative to it.
+    const promptContainer = canvas.parentElement ?? document.body;
+    this._prompt = new InteractionPrompt(promptContainer);
+    this._prompt.onPickup(id => this._pickup(id));
 
     this._resizeObs = new ResizeObserver(() => this._onResize(canvas));
     this._resizeObs.observe(canvas.parentElement ?? canvas);
@@ -144,6 +153,9 @@ export class Game {
     if (this._charCtrl && this._placer) {
       this._placer.checkInteractions(this._charCtrl.collider);
     }
+
+    // Keep prompt in sync with proximity state.
+    this._prompt?.update(this._placer?.nearbyAsset ?? null);
   }
 
   private _render(_alpha: number): void {
@@ -250,6 +262,21 @@ export class Game {
     }
   }
 
+  /** Read-only view of the player's collected items. */
+  get inventory(): Inventory { return this._inventory; }
+
+  /** Pick up the given asset: remove it from the world and add to inventory. */
+  private _pickup(assetId: string): void {
+    const placed = this._placer?.pickup(assetId);
+    if (!placed) return;
+    this._inventory.add(assetId, placed.enu);
+    this._prompt?.update(null);
+    document.dispatchEvent(new CustomEvent('game:pickup', {
+      detail: { assetId, enu: placed.enu },
+      bubbles: true,
+    }));
+  }
+
   stop(): void {
     this._loop.stop();
     this._resizeObs?.disconnect();
@@ -259,6 +286,8 @@ export class Game {
     this.stop();
     this._input?.unbind();
     this._camMgr?.unbind();
+    this._prompt?.dispose();
+    this._prompt = null;
     this._placer?.dispose();
     this._placer = null;
     if (this._charCtrl && this._physics) {

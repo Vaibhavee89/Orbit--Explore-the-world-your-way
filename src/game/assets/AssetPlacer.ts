@@ -127,6 +127,32 @@ export class AssetPlacer {
     this._activeOverlaps = nowOverlapping;
   }
 
+  /**
+   * Remove an asset from the world (scene + physics) and return its record.
+   * Returns null if the id was not found (already picked up or never placed).
+   */
+  pickup(assetId: string): PlacedAsset | null {
+    const idx = this._placed.findIndex(p => p.id === assetId);
+    if (idx === -1) return null;
+    const [placed] = this._placed.splice(idx, 1);
+    this._activeOverlaps.delete(assetId);
+    this._physics.world.removeCollider(placed.sensor, false);
+    this._scene.remove(placed.mesh);
+    console.info(`[AssetPlacer] "${assetId}" removed from world`);
+    return placed;
+  }
+
+  /**
+   * The first asset whose sensor the player is currently inside, or null.
+   * Updated by checkInteractions(); safe to read every frame.
+   */
+  get nearbyAsset(): PlacedAsset | null {
+    for (const placed of this._placed) {
+      if (this._activeOverlaps.has(placed.id)) return placed;
+    }
+    return null;
+  }
+
   /** All currently placed assets (read-only view). */
   get placed(): readonly PlacedAsset[] { return this._placed; }
 
