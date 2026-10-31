@@ -9,6 +9,8 @@ import type { RegionPhase } from '../../geospatial/RegionSelector';
 import type { BoundingBox, SelectedLocation } from '../../geospatial/types';
 import { LocationConfirmedEvent } from '../../geospatial/types';
 import { loadLastLocation, loadLocations, saveLocation, removeLocation } from '../../geospatial/locationStorage';
+import { WorldBuilderClient, WorldBuilderError } from '../../geospatial/WorldBuilderClient';
+import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
 // Manali, Himachal Pradesh — initial view.
 const INITIAL_LAT = 32.2432;
@@ -28,6 +30,9 @@ export class AdventureRoot extends LitElement {
   @state() private _regionBox: BoundingBox | null = null;
   @state() private _savedLocations: SelectedLocation[] = [];
   @state() private _showHistory = false;
+  @state() private _buildPhase: 'idle' | 'building' | 'done' | 'error' = 'idle';
+  @state() private _worldManifest: WorldManifest | null = null;
+  @state() private _buildError = '';
 
   private _cesium: OrbitCesiumViewer | null = null;
   private _container: HTMLDivElement | null = null;
@@ -306,6 +311,50 @@ export class AdventureRoot extends LitElement {
         font-family: inherit;
       }
       .rs-new-btn:hover { background: #38bdf822; }
+      .rs-new-btn:disabled { opacity: 0.4; cursor: default; }
+      .wb-error {
+        font-size: 0.72rem;
+        color: #f87171;
+        background: #f8717111;
+        border: 1px solid #f8717133;
+        border-radius: 6px;
+        padding: 6px 10px;
+        margin-top: 2px;
+        line-height: 1.5;
+        word-break: break-word;
+      }
+      .wb-done {
+        background: #a78bfa11;
+        border: 1px solid #a78bfa44;
+        border-radius: 6px;
+        padding: 6px 10px;
+        margin-top: 2px;
+      }
+      .wb-done-title {
+        font-size: 0.65rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #a78bfa;
+        margin-bottom: 3px;
+      }
+      .wb-done-body {
+        font-size: 0.72rem;
+        color: #c0c0e0;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.7;
+      }
+      .wb-spinner {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border: 2px solid #0a0a1a44;
+        border-top-color: #0a0a1a;
+        border-radius: 50%;
+        animation: adv-spin 0.7s linear infinite;
+        vertical-align: middle;
+        margin-right: 2px;
+      }
+      .rs-build-btn:disabled { opacity: 0.6; cursor: default; transform: none; }
       .rs-build-btn {
         flex: 1;
         background: linear-gradient(135deg, #a78bfa, #38bdf8);
@@ -463,7 +512,7 @@ export class AdventureRoot extends LitElement {
             </div>
           ` : ''}
 
-          <!-- Confirmed result -->
+          <!-- Confirmed result / build state -->
           ${this._regionPhase === 'idle' && b ? html`
             <div class="rs-result">
               <div class="rs-result-title">Selected Region</div>
@@ -472,10 +521,33 @@ export class AdventureRoot extends LitElement {
                 N ${b.north.toFixed(5)}° &nbsp; S ${b.south.toFixed(5)}°<br>
                 E ${b.east.toFixed(5)}° &nbsp; W ${b.west.toFixed(5)}°
               </div>
+
+              ${this._buildPhase === 'error' ? html`
+                <div class="wb-error">${this._buildError}</div>
+              ` : ''}
+
+              ${this._buildPhase === 'done' && this._worldManifest ? html`
+                <div class="wb-done">
+                  <div class="wb-done-title">World ready</div>
+                  <div class="wb-done-body">
+                    ID: ${this._worldManifest.id}<br>
+                    Terrain · Buildings · Roads
+                  </div>
+                </div>
+              ` : ''}
+
               <div class="rs-result-actions">
-                <button class="rs-new-btn" @click=${this._startRegion}>Draw new</button>
-                <button class="rs-build-btn" @click=${this._onBuildWorld}>
-                  🌍 Confirm &amp; Build World
+                <button class="rs-new-btn"
+                  ?disabled=${this._buildPhase === 'building'}
+                  @click=${() => { this._startRegion(); this._buildPhase = 'idle'; this._worldManifest = null; }}>
+                  Draw new
+                </button>
+                <button class="rs-build-btn"
+                  ?disabled=${this._buildPhase === 'building'}
+                  @click=${this._onBuildWorld}>
+                  ${this._buildPhase === 'building'
+                    ? html`<span class="wb-spinner"></span> Building…`
+                    : html`🌍 Confirm &amp; Build World`}
                 </button>
               </div>
             </div>
@@ -582,17 +654,10 @@ export class AdventureRoot extends LitElement {
     if (this._savedLocations.length === 0) this._showHistory = false;
   }
 
-  /**
-   * "Confirm & Build World" handler.
-   * Fires LocationConfirmedEvent with the active SelectedLocation.
-   * Phase 2 will replace the no-op body below with world-generation logic.
-   */
-  private _onBuildWorld() {
-    if (!this._regionBox) return;
+  /** "Confirm & Build World" — calls WorldBuilderClient.buildWorld and tracks state. */
+  private async _onBuildWorld() {
+    if (!this._regionBox || this._buildPhase === 'building') return;
 
-    // Build a SelectedLocation from the current box + label.
-    // If this exact region was already saved we reuse its id; otherwise we
-    // create a transient one so the event payload is always a full object.
     const existing = this._savedLocations.find(
       l => l.box.north === this._regionBox!.north &&
            l.box.south === this._regionBox!.south &&
@@ -611,14 +676,25 @@ export class AdventureRoot extends LitElement {
       savedAt: Date.now(),
     };
 
-    // Dispatch the event — Phase 2 listeners handle the actual world build.
+    // Fire the stable event contract so outer listeners can react.
     this.dispatchEvent(new LocationConfirmedEvent(location));
 
-    // No-op placeholder: log to console so the handoff contract is visible.
-    console.info(
-      '[AdventureRoot] onLocationConfirmed (no-op) →',
-      JSON.stringify(location, null, 2),
-    );
+    this._buildPhase = 'building';
+    this._buildError = '';
+    this._worldManifest = null;
+
+    try {
+      const manifest = await WorldBuilderClient.buildWorld(location);
+      this._worldManifest = manifest;
+      this._buildPhase = 'done';
+      console.info('[AdventureRoot] World built:', manifest.id, manifest.asset_urls);
+    } catch (err) {
+      this._buildPhase = 'error';
+      this._buildError = err instanceof WorldBuilderError
+        ? err.message
+        : String(err);
+      console.error('[AdventureRoot] World build failed:', err);
+    }
   }
 
   async firstUpdated() {

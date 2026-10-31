@@ -14,3 +14,5 @@ export {
   removeLocation,
   clearLocations,
 } from './locationStorage';
+export { WorldBuilderClient, WorldBuilderError } from './WorldBuilderClient';
+export type { WorldManifest } from './WorldBuilderClient';
