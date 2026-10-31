@@ -5,6 +5,8 @@ import { SceneManager } from '../rendering/SceneManager';
 import { WorldLoader } from '../world/WorldLoader';
 import { BuildingLoader } from '../world/BuildingLoader';
 import { RoadLoader } from '../world/RoadLoader';
+import { PhysicsWorld } from '../physics/PhysicsWorld';
+import type { PhysicsBodyHandle } from '../physics/PhysicsWorld';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
 export class Game {
@@ -15,6 +17,10 @@ export class Game {
   private _cube:     THREE.Mesh | null = null;
   private _angle    = 0;
   private _resizeObs: ResizeObserver | null = null;
+
+  // Physics
+  private _physics: PhysicsWorld | null = null;
+  private _testBox: { mesh: THREE.Mesh; body: PhysicsBodyHandle } | null = null;
 
   get running(): boolean { return this._loop.running; }
 
@@ -46,13 +52,52 @@ export class Game {
       (dt) => this._tick(dt),
       (alpha) => this._render(alpha),
     );
+
+    // PhysicsWorld init is synchronous once the WASM module is loaded
+    // (vite-plugin-wasm handles the static import).
+    this._initPhysics();
   }
 
-  private _tick(dt: number): void {
-    this._angle += dt;
+  private _initPhysics(): void {
+    this._physics = new PhysicsWorld();
+    this._physics.timestep = 1 / 60;
+
+    // Hardcoded ground plane (y = 0).
+    this._physics.addGroundPlane();
+
+    // Visible ground plane in Three.js.
+    const groundGeo = new THREE.PlaneGeometry(20, 20);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x334455, roughness: 0.9 });
+    const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.receiveShadow = true;
+    this._scene?.add(groundMesh);
+
+    // Dynamic test box dropped from y = 10.
+    const handle = this._physics.addDynamicBox(0, 10, 0, 0.5, 0.5, 0.5);
+    const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+    const boxMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.5 });
+    const boxMesh = new THREE.Mesh(boxGeo, boxMat);
+    boxMesh.castShadow = true;
+    this._scene?.add(boxMesh);
+    this._testBox = { mesh: boxMesh, body: handle };
+  }
+
+  private _tick(_dt: number): void {
+    // Spinning demo cube (present before world loads).
     if (this._cube) {
+      this._angle += _dt;
       this._cube.rotation.y = this._angle;
       this._cube.rotation.x = this._angle * 0.4;
+    }
+
+    // Physics step + mesh sync.
+    if (this._physics && this._testBox) {
+      this._physics.step();
+      const t = this._testBox.body.rigidBody.translation();
+      const r = this._testBox.body.rigidBody.rotation();
+      this._testBox.mesh.position.set(t.x, t.y, t.z);
+      this._testBox.mesh.quaternion.set(r.x, r.y, r.z, r.w);
     }
   }
 
@@ -111,6 +156,9 @@ export class Game {
 
   dispose(): void {
     this.stop();
+    this._physics?.free();
+    this._physics = null;
+    this._testBox = null;
     this._scene?.dispose();
     this._renderer?.dispose();
     this._cube = this._camera = this._scene = this._renderer = null;

@@ -1,6 +1,7 @@
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
+import wasm from 'vite-plugin-wasm';
 
 const cesiumSource = 'node_modules/cesium/Build/Cesium';
 const cesiumBaseUrl = 'cesium';
@@ -13,6 +14,7 @@ export default defineConfig(({ mode }) => {
         host: '0.0.0.0',
       },
       plugins: [
+        wasm(),
         viteStaticCopy({
           targets: [
             { src: `${cesiumSource}/Workers/*`, dest: `${cesiumBaseUrl}/Workers` },

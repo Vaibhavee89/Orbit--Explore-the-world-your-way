@@ -1,2 +1,2 @@
-// Rapier3D world setup, rigid bodies, colliders
-export {};
+export { PhysicsWorld } from './PhysicsWorld';
+export type { PhysicsBodyHandle } from './PhysicsWorld';
