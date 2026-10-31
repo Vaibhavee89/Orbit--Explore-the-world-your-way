@@ -5,7 +5,9 @@ import { LocationSelectedEvent } from '../../geospatial/LocationSelector';
 import type { GeoResult } from '../../geospatial/LocationSelector';
 import '../../geospatial/LocationSelector';
 import { RegionSelector } from '../../geospatial/RegionSelector';
-import type { BoundingBox, RegionPhase } from '../../geospatial/RegionSelector';
+import type { RegionPhase } from '../../geospatial/RegionSelector';
+import type { BoundingBox, SelectedLocation } from '../../geospatial/types';
+import { loadLastLocation, loadLocations, saveLocation, removeLocation } from '../../geospatial/locationStorage';
 
 // Manali, Himachal Pradesh — initial view.
 const INITIAL_LAT = 32.2432;
@@ -23,6 +25,8 @@ export class AdventureRoot extends LitElement {
   @state() private _currentLocation = INITIAL_NAME;
   @state() private _regionPhase: RegionPhase = 'idle';
   @state() private _regionBox: BoundingBox | null = null;
+  @state() private _savedLocations: SelectedLocation[] = [];
+  @state() private _showHistory = false;
 
   private _cesium: OrbitCesiumViewer | null = null;
   private _container: HTMLDivElement | null = null;
@@ -301,6 +305,84 @@ export class AdventureRoot extends LitElement {
         font-family: inherit;
       }
       .rs-new-btn:hover { background: #38bdf822; }
+
+      /* ── History panel ── */
+      .hist-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(10,10,26,0.75);
+        backdrop-filter: blur(6px);
+        border: 1px solid #a78bfa44;
+        color: #a78bfa;
+        font-size: 0.75rem;
+        font-family: inherit;
+        padding: 5px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .hist-btn:hover { background: #a78bfa22; }
+      .hist-panel {
+        background: rgba(10,10,26,0.92);
+        backdrop-filter: blur(12px);
+        border: 1px solid #a78bfa44;
+        border-radius: 10px;
+        padding: 10px 0;
+        min-width: 280px;
+        max-height: 280px;
+        overflow-y: auto;
+      }
+      .hist-title {
+        font-size: 0.65rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #a78bfa;
+        padding: 0 14px 8px;
+        border-bottom: 1px solid #a78bfa22;
+        margin-bottom: 4px;
+      }
+      .hist-empty {
+        font-size: 0.78rem;
+        color: #505080;
+        padding: 8px 14px;
+      }
+      .hist-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 7px 14px;
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+      .hist-item:hover { background: #a78bfa11; }
+      .hist-item-info { flex: 1; min-width: 0; }
+      .hist-label {
+        font-size: 0.8rem;
+        color: #e0e0ff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .hist-meta {
+        font-size: 0.68rem;
+        color: #6060aa;
+        margin-top: 1px;
+        font-variant-numeric: tabular-nums;
+      }
+      .hist-delete {
+        background: transparent;
+        border: none;
+        color: #503050;
+        cursor: pointer;
+        font-size: 0.75rem;
+        padding: 2px 4px;
+        border-radius: 4px;
+        flex-shrink: 0;
+        margin-top: 2px;
+        transition: color 0.1s;
+      }
+      .hist-delete:hover { color: #f87171; }
     `;
     document.head.appendChild(style);
   }
@@ -321,11 +403,17 @@ export class AdventureRoot extends LitElement {
           ></orbit-location-selector>
           <div class="adv-location">📍 ${this._currentLocation}</div>
 
-          <!-- Region selector trigger -->
+          <!-- Region selector trigger + history -->
           ${this._regionPhase === 'idle' ? html`
-            <button class="rs-btn" @click=${this._startRegion}>
-              ⬚ Select Region
-            </button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="rs-btn" @click=${this._startRegion}>⬚ Select Region</button>
+              ${this._savedLocations.length ? html`
+                <button class="hist-btn" @click=${() => this._showHistory = !this._showHistory}>
+                  🕐 History (${this._savedLocations.length})
+                </button>
+              ` : ''}
+            </div>
+            ${this._showHistory ? this._renderHistory() : ''}
           ` : ''}
 
           <!-- Active drawing panel -->
@@ -389,6 +477,35 @@ export class AdventureRoot extends LitElement {
     `;
   }
 
+  private _renderHistory() {
+    const fmt = (ts: number) =>
+      new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    return html`
+      <div class="hist-panel">
+        <div class="hist-title">Recent Regions</div>
+        ${this._savedLocations.length === 0
+          ? html`<div class="hist-empty">No saved regions yet.</div>`
+          : this._savedLocations.map(loc => html`
+            <div class="hist-item" @click=${() => this._restoreLocation(loc)}>
+              <div class="hist-item-info">
+                <div class="hist-label">${loc.label}</div>
+                <div class="hist-meta">
+                  ${loc.box.widthM.toFixed(0)} m × ${loc.box.heightM.toFixed(0)} m
+                  &nbsp;·&nbsp; ${fmt(loc.savedAt)}
+                </div>
+              </div>
+              <button class="hist-delete" title="Remove" @click=${(e: Event) => {
+                e.stopPropagation();
+                this._deleteLocation(loc.id);
+              }}>✕</button>
+            </div>
+          `)
+        }
+      </div>
+    `;
+  }
+
   private _onLocationSelected(e: Event) {
     const { lat, lon, name } = (e as LocationSelectedEvent).detail;
     this._currentLocation = name;
@@ -417,6 +534,9 @@ export class AdventureRoot extends LitElement {
     this._regionPhase = 'idle';
     if (box) {
       this._regionBox = box;
+      const label = this._currentLocation;
+      saveLocation(box, label);
+      this._savedLocations = loadLocations();
       console.info('[AdventureRoot] Region confirmed:', JSON.stringify(box, null, 2));
     }
   }
@@ -426,6 +546,20 @@ export class AdventureRoot extends LitElement {
     this._regionSel?.deactivate();
     this._regionPhase = 'idle';
     this._regionBox = null;
+  }
+
+  private _restoreLocation(loc: SelectedLocation) {
+    this._regionBox = loc.box;
+    this._showHistory = false;
+    // Fly to centre of the restored region.
+    this._cesium?.flyTo(loc.center.lat, loc.center.lon, 1200);
+    this._currentLocation = loc.label;
+  }
+
+  private _deleteLocation(id: string) {
+    removeLocation(id);
+    this._savedLocations = loadLocations();
+    if (this._savedLocations.length === 0) this._showHistory = false;
   }
 
   async firstUpdated() {
@@ -448,13 +582,24 @@ export class AdventureRoot extends LitElement {
     }
 
     try {
+      // Load history before Cesium init so we know if we have a saved location.
+      this._savedLocations = loadLocations();
+      const lastSaved = loadLastLocation();
+
       this._cesium = await OrbitCesiumViewer.create({
         container,
         googleMapsApiKey: apiKey,
-        lat: INITIAL_LAT,
-        lon: INITIAL_LON,
-        heightMetres: 2000,
+        lat: lastSaved?.center.lat ?? INITIAL_LAT,
+        lon: lastSaved?.center.lon ?? INITIAL_LON,
+        heightMetres: 1200,
       });
+
+      // Restore last confirmed region into the HUD.
+      if (lastSaved) {
+        this._regionBox = lastSaved.box;
+        this._currentLocation = lastSaved.label;
+      }
+
       this._status = 'ready';
     } catch (err) {
       this._status = 'error';

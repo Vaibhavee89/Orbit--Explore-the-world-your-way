@@ -11,17 +11,10 @@ import {
   ScreenSpaceEventType,
   Math as CesiumMath,
 } from 'cesium';
+import type { BoundingBox } from './types';
 
-// ── types ────────────────────────────────────────────────────────────────────
-
-export interface BoundingBox {
-  north: number; // degrees
-  south: number;
-  east: number;
-  west: number;
-  widthM: number;
-  heightM: number;
-}
+// Re-export so existing callers importing BoundingBox from here still work.
+export type { BoundingBox } from './types';
 
 export type RegionPhase = 'idle' | 'drawing' | 'drawn';
 
