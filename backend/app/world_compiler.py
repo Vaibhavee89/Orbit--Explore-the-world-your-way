@@ -58,6 +58,7 @@ from app.world_builder.road_processor import build_road_graph
 from app.world_builder.terrain_processor import generate_terrain_mesh
 from app.gameplay.terrain_analyzer import analyze_terrain
 from app.gameplay.poi_extractor import extract_pois
+from app.gameplay.challenge_generator import generate_challenges
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ class WorldManifest:
     assets: dict[str, str]
     stats: dict[str, Any] = field(default_factory=dict)
     pointsOfInterest: list[dict[str, Any]] = field(default_factory=list)
+    challenges:       list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -94,6 +96,7 @@ class WorldManifest:
             "assets":           self.assets,
             "stats":            self.stats,
             "pointsOfInterest": self.pointsOfInterest,
+            "challenges":       self.challenges,
         }
 
     def save(self, path: Path) -> None:
@@ -165,6 +168,7 @@ def compile_world(
             assets=data["assets"],
             stats=data.get("stats", {}),
             pointsOfInterest=data.get("pointsOfInterest", []),
+            challenges=data.get("challenges", []),
         )
 
     world_dir.mkdir(parents=True, exist_ok=True)
@@ -210,6 +214,21 @@ def compile_world(
         output_path=world_dir / "pois.json",
     )
 
+    # ── 8. Challenge generation ───────────────────────────────────────────────
+    east_half  = (features.cell_size_e * (features.ncols - 1)) / 2
+    north_half = (features.cell_size_n * (features.nrows - 1)) / 2
+    challenges = generate_challenges(
+        world_id,
+        terrain_summary=features.summary,
+        named_features=features.features,
+        poi_records=[r.to_dict() for r in poi_records],
+        z_min=terrain.z_min,
+        z_max=terrain.z_max,
+        east_half=east_half,
+        north_half=north_half,
+        output_path=world_dir / "challenges.json",
+    )
+
     elapsed = round(time.time() - t0, 1)
     logger.info("World %s compiled in %.1f s", world_id, elapsed)
 
@@ -225,16 +244,19 @@ def compile_world(
             "buildings_physics":  "buildings_physics.json",
             "terrain_features":   "terrain_features.json",
             "pois":               "pois.json",
+            "challenges":         "challenges.json",
         },
         stats={
-            "terrain":   terrain.stats,
-            "buildings": buildings.stats,
-            "roads":     roads.stats,
-            "features":  features.summary,
-            "poi_count": len(poi_records),
-            "elapsed_s": elapsed,
+            "terrain":         terrain.stats,
+            "buildings":       buildings.stats,
+            "roads":           roads.stats,
+            "features":        features.summary,
+            "poi_count":       len(poi_records),
+            "challenge_count": len(challenges),
+            "elapsed_s":       elapsed,
         },
         pointsOfInterest=[r.to_dict() for r in poi_records],
+        challenges=challenges,
     )
     manifest.save(manifest_path)
     return manifest
