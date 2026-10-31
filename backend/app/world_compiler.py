@@ -159,6 +159,7 @@ def compile_world(
     terrain = generate_terrain_mesh(
         elev.tif_path,
         output_path=world_dir / "terrain.glb",
+        heightmap_path=world_dir / "heightmap.json",
     )
 
     # ── 4. Building prisms ────────────────────────────────────────────────────
@@ -183,6 +184,7 @@ def compile_world(
             "terrain":   "terrain.glb",
             "buildings": "buildings.glb",
             "roads":     "roads.json",
+            "heightmap": "heightmap.json",
         },
         stats={
             "terrain":   terrain.stats,

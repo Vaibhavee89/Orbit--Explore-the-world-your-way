@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import json
 import numpy as np
 import rasterio
 import trimesh
@@ -45,11 +46,12 @@ class TerrainMesh:
     glb_path: Path
     vertex_count: int
     face_count: int
-    grid_shape: tuple[int, int]          # (rows, cols)
-    z_min: float                          # metres (raw elevation)
+    grid_shape: tuple[int, int]           # (rows, cols)
+    z_min: float                           # metres (raw elevation)
     z_max: float
     z_mean: float
-    origin: tuple[float, float, float]   # (lat, lon, alt) of ENU origin
+    origin: tuple[float, float, float]    # (lat, lon, alt) of ENU origin
+    heightmap_path: Path | None = None    # path to heightmap.json side-channel
     stats: dict[str, Any] = field(default_factory=dict)
 
 
@@ -96,6 +98,7 @@ def generate_terrain_mesh(
     *,
     grid_size: int = 128,
     output_path: Path | str | None = None,
+    heightmap_path: Path | str | None = None,
 ) -> TerrainMesh:
     """
     Convert a GeoTIFF elevation raster to a GLB terrain mesh.
@@ -171,6 +174,28 @@ def generate_terrain_mesh(
     mesh.export(str(output_path))
 
     z_vals = elevation.ravel()
+
+    # ── 6. Heightmap side-channel ─────────────────────────────────────────────
+    # Saved as JSON with row-major heights and ENU extents so the frontend can
+    # build a Rapier heightfield collider that matches the rendered mesh exactly.
+    hmap_path: Path | None = None
+    if heightmap_path is not None:
+        hmap_path = Path(heightmap_path)
+        hmap_data = {
+            "nrows":       grid_size,
+            "ncols":       grid_size,
+            # Row-major (C order): heights[r * ncols + c] = elev at (row=r, col=c).
+            # The frontend must transpose to column-major before passing to Rapier.
+            "heights":     [round(float(v), 2) for v in elevation.ravel()],
+            "east_min":    round(float(east.min()), 2),
+            "east_max":    round(float(east.max()), 2),
+            "north_min":   round(float(north.min()), 2),
+            "north_max":   round(float(north.max()), 2),
+            "z_min":       round(float(z_vals.min()), 2),
+            "z_max":       round(float(z_vals.max()), 2),
+        }
+        hmap_path.write_text(json.dumps(hmap_data))
+
     return TerrainMesh(
         glb_path=output_path,
         vertex_count=len(vertices),
@@ -180,6 +205,7 @@ def generate_terrain_mesh(
         z_max=float(z_vals.max()),
         z_mean=float(z_vals.mean()),
         origin=(origin_lat, origin_lon, 0.0),
+        heightmap_path=hmap_path,
         stats={
             "relief_m":   round(float(z_vals.max() - z_vals.min()), 1),
             "vertices":   len(vertices),

@@ -6,7 +6,9 @@ import { WorldLoader } from '../world/WorldLoader';
 import { BuildingLoader } from '../world/BuildingLoader';
 import { RoadLoader } from '../world/RoadLoader';
 import { PhysicsWorld } from '../physics/PhysicsWorld';
+import { HeightfieldLoader } from '../physics/HeightfieldLoader';
 import type { PhysicsBodyHandle } from '../physics/PhysicsWorld';
+import type { Collider } from '@dimforge/rapier3d';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 
 export class Game {
@@ -20,6 +22,7 @@ export class Game {
 
   // Physics
   private _physics: PhysicsWorld | null = null;
+  private _groundCollider: Collider | null = null;
   private _testBox: { mesh: THREE.Mesh; body: PhysicsBodyHandle } | null = null;
 
   get running(): boolean { return this._loop.running; }
@@ -62,8 +65,8 @@ export class Game {
     this._physics = new PhysicsWorld();
     this._physics.timestep = 1 / 60;
 
-    // Hardcoded ground plane (y = 0).
-    this._physics.addGroundPlane();
+    // Flat ground plane (y = 0) — replaced by terrain heightfield in loadWorld().
+    this._groundCollider = this._physics.addGroundPlane();
 
     // Visible ground plane in Three.js.
     const groundGeo = new THREE.PlaneGeometry(20, 20);
@@ -140,11 +143,46 @@ export class Game {
       new RoadLoader().load(manifest, this._scene),
     ]);
 
+    // Swap flat ground plane → terrain heightfield collider.
+    if (this._physics) {
+      // Remove flat placeholder.
+      if (this._groundCollider) {
+        this._physics.world.removeCollider(this._groundCollider, false);
+        this._groundCollider = null;
+      }
+      // Remove test box from both physics and scene.
+      if (this._testBox) {
+        this._physics.world.removeCollider(this._testBox.body.collider, false);
+        this._physics.world.removeRigidBody(this._testBox.body.rigidBody);
+        this._scene?.remove(this._testBox.mesh);
+        this._testBox.mesh.geometry.dispose();
+        (this._testBox.mesh.material as THREE.Material).dispose();
+        this._testBox = null;
+      }
+
+      // Build heightfield and re-drop the test box above terrain.
+      try {
+        const { zMax } = await new HeightfieldLoader().load(manifest, this._physics);
+        const dropY = zMax + 50;
+        const handle = this._physics.addDynamicBox(0, dropY, 0, 0.5, 0.5, 0.5);
+        const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+        const boxMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.5 });
+        const boxMesh = new THREE.Mesh(boxGeo, boxMat);
+        boxMesh.castShadow = true;
+        this._scene?.add(boxMesh);
+        this._testBox = { mesh: boxMesh, body: handle };
+        console.info(`[Game] Heightfield loaded; dropping test box from y=${dropY.toFixed(0)}`);
+      } catch (err) {
+        console.error('[Game] Heightfield load failed, keeping flat ground:', err);
+        this._groundCollider = this._physics.addGroundPlane();
+      }
+    }
+
     // Position camera for a bird's-eye view of the terrain (~1 km² region).
-    // ENU metres: terrain spans roughly ±500 m in X/Y; camera at (0, 600, 900).
+    // Terrain Y ≈ 1850–2100 m for Manali; look at terrain centre from above.
     if (this._camera) {
-      this._camera.position.set(0, 600, 900);
-      this._camera.lookAt(0, 0, 0);
+      this._camera.position.set(0, 2500, 1200);
+      this._camera.lookAt(0, 1950, 0);
       this._camera.updateProjectionMatrix();
     }
   }
@@ -158,6 +196,7 @@ export class Game {
     this.stop();
     this._physics?.free();
     this._physics = null;
+    this._groundCollider = null;
     this._testBox = null;
     this._scene?.dispose();
     this._renderer?.dispose();
