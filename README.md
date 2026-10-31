@@ -13,6 +13,23 @@
 
 ---
 
+## 🎭 Dual-Mode Experience
+
+Orbit runs in **two coexisting modes**. The existing Travel experience is unchanged; the Adventure experience is being built in parallel on the `feature/real-world-game` branch.
+
+### 🧳 Travel Mode (existing, stable)
+The original AI-powered 3D travel companion — chat with Gemini/OpenAI to explore the world, build a bucket list, and plan multi-stop trips on photorealistic 3D maps. All existing behavior lives in [index.tsx](index.tsx), [map_app.ts](map_app.ts), and [mcp_maps_server.ts](mcp_maps_server.ts). These three files are **protected**: new work must not delete or break them.
+
+### 🗺️ Adventure Mode (in development)
+A real-world exploration game layered on top of the same 3D map. New gameplay code is being added alongside Travel Mode without touching the files above, so `npm run dev` continues to boot the current app at every step of the rollout.
+
+**Ground rules for contributors on `feature/real-world-game`:**
+- Do not delete or rename [index.tsx](index.tsx), [map_app.ts](map_app.ts), or [mcp_maps_server.ts](mcp_maps_server.ts).
+- Add Adventure Mode as new modules/components; wire it in behind a mode switch rather than replacing Travel Mode call sites.
+- `npm run dev` must still boot the current Travel experience after every commit.
+
+---
+
 ## ✨ Features
 
 ### 🗺️ **Immersive 3D Exploration**
@@ -93,10 +110,9 @@
 
 3. **Configure environment variables**
    
-   Create a `.env` file in the root directory:
-   ```env
-   GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
-   GEMINI_API_KEY=your_gemini_api_key_here
+   Copy `.env.example` to `.env` and fill in your keys (see the **Environment Variables** section below):
+   ```bash
+   cp .env.example .env
    ```
 
 4. **Run the development server**
@@ -106,7 +122,9 @@
 
 5. **Open your browser**
    
-   Navigate to `http://localhost:5173` (or the port shown in terminal)
+   Navigate to `http://localhost:3000`
+   - Travel Mode (default): `http://localhost:3000/`
+   - Adventure Mode (preview): `http://localhost:3000/?mode=adventure`
 
 ---
 
@@ -217,6 +235,22 @@ Formula: `Flight + (Accommodation × nights) + (Food × days) + (Activities × d
 
 ---
 
+## 🔑 Environment Variables
+
+Copy `.env.example` to `.env` before running the app. **Never commit `.env`** — it is gitignored.
+
+| Variable | Mode | Required | Description |
+|---|---|---|---|
+| `GOOGLE_MAPS_API_KEY` | Travel | ✅ | Google Maps JS / Geocoding / Directions / Street View APIs. Create at [console.cloud.google.com](https://console.cloud.google.com/apis/credentials). Enable: Maps JavaScript API, Geocoding API, Directions API, Street View API. |
+| `OPENAI_API_KEY` | Travel | ✅ | OpenAI key for the GPT-4o-mini AI travel assistant. Get one at [platform.openai.com/api-keys](https://platform.openai.com/api-keys). |
+| `VITE_MAP_TILES_API_KEY` | Adventure | ✅ | Restricted Google Maps Tiles API key for Cesium Photorealistic 3D tiles. Create a separate key restricted to **Map Tiles API** only + your HTTP referrers. Verify: `curl "https://tile.googleapis.com/v1/3dtiles/root.json?key=YOUR_KEY"` → 200. Falls back to `VITE_GOOGLE_MAPS_API_KEY` → `GOOGLE_MAPS_API_KEY`. |
+| `VITE_GOOGLE_MAPS_API_KEY` | Adventure | ⚪ | Vite-prefixed alias for the Maps key used by Adventure Mode modules (`import.meta.env.VITE_GOOGLE_MAPS_API_KEY`). Falls back to `GOOGLE_MAPS_API_KEY` if left blank. |
+| `VITE_WORLDBUILDER_API_URL` | Adventure | ⚪ | Base URL for the Worldbuilder backend (geo-fenced quest generation). Leave blank during local dev — the feature is not yet implemented. |
+
+> ⚪ = optional / not yet used in production.
+
+---
+
 ## 🌐 API Integration
 
 ### Google Maps APIs Used
@@ -229,7 +263,7 @@ Formula: `Flight + (Accommodation × nights) + (Food × days) + (Activities × d
 ### External APIs
 
 - **Open-Meteo**: Free weather data (no API key required)
-- **Google Gemini**: AI-powered chat and suggestions
+- **OpenAI GPT-4o-mini**: AI-powered chat and suggestions
 
 ---
 

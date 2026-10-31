@@ -72,6 +72,15 @@ function camelCaseToDash(str: string): string {
 document.addEventListener('DOMContentLoaded', async (event) => {
   const rootElement = document.querySelector('#root')! as HTMLElement;
 
+  // --- Adventure Mode feature flag ---
+  // Add ?mode=adventure to the URL to activate. Defaults OFF (Travel Mode).
+  if (new URLSearchParams(location.search).get('mode') === 'adventure') {
+    await import('./src/features/adventure/index');
+    rootElement.appendChild(document.createElement('orbit-adventure-root'));
+    return;
+  }
+  // --- end flag ---
+
   const mapApp = document.createElement('gdm-map-app') as unknown as MapApp;
   rootElement.appendChild(mapApp as unknown as Node);
 
