@@ -59,6 +59,12 @@ export class InputManager {
   /** Mark the jump intent as consumed so it fires only once per press. */
   consumeJump(): void { this._justPressed.delete('Space'); }
 
+  /** True if `code` was newly pressed since the last consumeKey(code) call. */
+  wasJustPressed(code: string): boolean { return this._justPressed.has(code); }
+
+  /** Mark a key's "just pressed" state as consumed (edge-triggered toggles). */
+  consumeKey(code: string): void { this._justPressed.delete(code); }
+
   /** True while either Shift key is held (walk → run). */
   get sprint(): boolean {
     return this.isDown('ShiftLeft') || this.isDown('ShiftRight');

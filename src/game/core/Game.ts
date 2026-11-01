@@ -9,6 +9,10 @@ import { Player } from '../player/Player';
 import { WorldLoader } from '../world/WorldLoader';
 import { BuildingLoader } from '../world/BuildingLoader';
 import { RoadLoader } from '../world/RoadLoader';
+import { LocalWorldLoader } from '../world/LocalWorldLoader';
+import type { LocalWorldDefinition } from '../world/LocalWorldDefinition';
+import { DiscoveryManager } from '../exploration/DiscoveryManager';
+import { EventBus } from './EventBus';
 import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { HeightfieldLoader } from '../physics/HeightfieldLoader';
 import { BuildingColliderLoader } from '../physics/BuildingColliderLoader';
@@ -45,6 +49,7 @@ export class Game {
   private _groundCollider: Collider            | null = null;
   private _charCtrl:       CharacterController | null = null;
   private _placer:            AssetPlacer         | null = null;
+  private _discovery:         DiscoveryManager    | null = null;
   private _inventory         = new Inventory();
   private _prompt:            InteractionPrompt   | null = null;
   // Initialised in start() from localStorage; falls back to 'soldier'.
@@ -116,6 +121,27 @@ export class Game {
     const camMgr = this._camMgr;
     const camera = this._camera;
 
+    // Edge-triggered UI/camera key bindings. Dispatched as DOM events so the
+    // Lit UI layer (AdventureRoot) can react without coupling to Game internals.
+    if (input) {
+      if (input.wasJustPressed('KeyC')) {
+        input.consumeKey('KeyC');
+        const mode = camMgr?.toggleMode();
+        document.dispatchEvent(new CustomEvent('game:camera-mode', { detail: { mode } }));
+      }
+      for (const [code, event] of [
+        ['KeyI', 'game:toggle-inventory'],
+        ['KeyJ', 'game:toggle-journal'],
+        ['KeyM', 'game:toggle-map'],
+        ['Escape', 'game:toggle-pause'],
+      ] as const) {
+        if (input.wasJustPressed(code)) {
+          input.consumeKey(code);
+          document.dispatchEvent(new CustomEvent(event));
+        }
+      }
+    }
+
     if (this._charCtrl && input && camMgr) {
       // Physics-driven movement via KCC.
       const dir  = input.moveDir;
@@ -159,6 +185,9 @@ export class Game {
     // Intersection queries are valid immediately after world.step().
     if (this._charCtrl && this._placer) {
       this._placer.checkInteractions(this._charCtrl.collider);
+    }
+    if (this._charCtrl && this._discovery) {
+      this._discovery.checkDiscoveries(this._charCtrl.collider);
     }
 
     // Keep prompt in sync with proximity state.
@@ -244,18 +273,76 @@ export class Game {
       console.info('[Game] Interaction event:', detail);
     });
 
-    // Spawn the ancient-artifact at ENU (100, 100) — visible on the terrain.
-    // Uses a placeholder sphere if the GLB has not yet been placed at
-    // public/assets/vi3w/artifact/ancient_artifact.glb.
-    try {
-      const artifactEntry = AssetRegistry.default.getAsset('ancient-artifact');
-      await this._placer.place(artifactEntry, 100, 100);
-    } catch (err) {
-      console.warn('[Game] Failed to place test artifact:', err);
+    // Spawn the three P4-01 Vi3W assets around the player's starting area
+    // (within walking distance of spawn at ENU origin).
+    const spawns: Array<[id: string, e: number, n: number]> = [
+      ['ancient-artifact', 100, 100],
+      ['treasure-chest', -80, 60],
+      ['signboard', 30, -50],
+    ];
+    for (const [id, e, n] of spawns) {
+      try {
+        const entry = AssetRegistry.default.getAsset(id);
+        await this._placer.place(entry, e, n);
+      } catch (err) {
+        console.warn(`[Game] Failed to place "${id}":`, err);
+      }
     }
 
     // Load GLB avatar using the active character from the library.
     await this._loadAvatar(this._activeCharacterId, spawnY);
+  }
+
+  /**
+   * Load a hand-authored World Registry environment — procedural terrain +
+   * placed props, no backend round-trip. Mirrors loadWorld()'s setup order
+   * (terrain/physics → character controller → props → avatar) but builds
+   * everything from a LocalWorldDefinition instead of a fetched manifest.
+   */
+  async loadLocalWorld(def: LocalWorldDefinition): Promise<void> {
+    if (!this._scene || !this._physics) throw new Error('Game not started');
+
+    if (this._cube) {
+      this._scene.remove(this._cube);
+      this._cube.geometry.dispose();
+      (this._cube.material as THREE.Material).dispose();
+      this._cube = null;
+    }
+
+    if (this._groundCollider) {
+      this._physics.world.removeCollider(this._groundCollider, false);
+      this._groundCollider = null;
+    }
+
+    this._placer = new AssetPlacer(this._physics, this._scene);
+    this._placer.onInteract((id, placed) => {
+      const detail = { assetId: id, enu: placed.enu, worldY: placed.worldY };
+      document.dispatchEvent(new CustomEvent('game:interact', { detail, bubbles: true }));
+      console.info('[Game] Interaction event:', detail);
+    });
+
+    // Terrain + heightfield physics + props (including vi3w collectibles,
+    // placed via this._placer so pickup/inventory wiring is unchanged).
+    const { spawnY, discoverableZones } = await new LocalWorldLoader().load(
+      def, this._scene, this._physics, this._placer,
+    );
+
+    // Landmark discovery zones — bridges, viewpoints, temples, etc. Distinct
+    // from AssetPlacer: these stay in the world, only the "discovered" state
+    // changes (no pickup).
+    this._discovery = new DiscoveryManager(this._physics);
+    for (const zone of discoverableZones) {
+      this._discovery.addZone({ ...zone, xpReward: 100 });
+    }
+    console.info(`[Game] Registered ${discoverableZones.length} discoverable landmarks`);
+
+    const groundSpawnY = spawnY + 2;
+    this._charCtrl = new CharacterController(
+      this._physics.world, def.spawn.x, groundSpawnY, def.spawn.z,
+    );
+    console.info(`[Game] Local world "${def.worldId}" — spawned at y=${groundSpawnY.toFixed(1)}`);
+
+    await this._loadAvatar(this._activeCharacterId, groundSpawnY);
   }
 
   /**
@@ -312,6 +399,7 @@ export class Game {
     if (!placed) return;
     this._inventory.add(assetId, placed.enu);
     this._prompt?.update(null);
+    EventBus.emit('item:collected', { assetId });
     document.dispatchEvent(new CustomEvent('game:pickup', {
       detail: { assetId, enu: placed.enu },
       bubbles: true,
@@ -331,6 +419,9 @@ export class Game {
     this._prompt = null;
     this._placer?.dispose();
     this._placer = null;
+    // Not calling discovery.dispose() — its colliders live in the same
+    // Rapier world freed by physics.free() just below; avoid a double-free.
+    this._discovery = null;
     if (this._charCtrl && this._physics) {
       this._charCtrl.free(this._physics.world);
     }

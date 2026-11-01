@@ -142,6 +142,15 @@ def generate_terrain_mesh(
         if valid.size:
             elevation[nodata_mask] = valid.mean()
 
+    # Normalize elevation to be LOCAL to this region (Z=0 at the region's
+    # lowest point) rather than raw metres-above-sea-level. Regions like
+    # Manali sit at ~1900-2800m absolute altitude — keeping that as-is would
+    # place the terrain mesh thousands of metres away (in Y, after the
+    # Z-up->Y-up rotation) from everything else in the scene (player spawn,
+    # buildings, debug helpers), which all assume a local ~0-based frame.
+    absolute_z_min = float(elevation.min())
+    elevation = elevation - absolute_z_min
+
     # ── 2. Build lat/lon grids for pixel centres ──────────────────────────────
     # Pixel centres are evenly spaced between the raster bounds.
     lons = np.linspace(bounds.left,  bounds.right, grid_size + 1)[:-1]
@@ -207,8 +216,12 @@ def generate_terrain_mesh(
         origin=(origin_lat, origin_lon, 0.0),
         heightmap_path=hmap_path,
         stats={
-            "relief_m":   round(float(z_vals.max() - z_vals.min()), 1),
-            "vertices":   len(vertices),
-            "triangles":  len(faces),
+            "relief_m":        round(float(z_vals.max() - z_vals.min()), 1),
+            "vertices":        len(vertices),
+            "triangles":       len(faces),
+            # Absolute metres-above-sea-level of the region's lowest point.
+            # z_min/z_max above are LOCAL (0-based); add this to recover
+            # real-world altitude if ever needed.
+            "absolute_z_min_m": round(absolute_z_min, 1),
         },
     )

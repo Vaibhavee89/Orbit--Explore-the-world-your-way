@@ -23,10 +23,54 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from typing import Callable, TypeVar
+
 import geopandas as gpd
 import osmnx as ox
+from osmnx._errors import InsufficientResponseError
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+# ── Retry configuration ──────────────────────────────────────────────────────
+
+_MAX_RETRIES = int(os.getenv("OSM_FETCH_MAX_RETRIES", "4"))
+_BACKOFF_BASE_S = float(os.getenv("OSM_FETCH_BACKOFF_BASE_S", "2.0"))
+
+
+def _retry_with_backoff(fn: Callable[[], T], label: str) -> T:
+    """
+    Call `fn()`, retrying with exponential backoff on failure (network errors,
+    Overpass 502/504/429 rate-limit/capacity responses, etc).
+
+    Waits _BACKOFF_BASE_S * 2^attempt seconds between attempts (2s, 4s, 8s, 16s
+    by default), then re-raises the last exception if all attempts fail.
+
+    InsufficientResponseError means Overpass answered successfully with "no
+    matching features/edges here" — a legitimate empty result, not a
+    transient failure. Retrying it just wastes ~14-30s per call for regions
+    that genuinely have no roads/buildings (e.g. open desert, glaciers), so
+    it's re-raised immediately without consuming a retry attempt.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            return fn()
+        except InsufficientResponseError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - Overpass/network errors vary widely
+            last_exc = exc
+            if attempt == _MAX_RETRIES - 1:
+                break
+            wait_s = _BACKOFF_BASE_S * (2 ** attempt)
+            logger.warning(
+                "%s failed (attempt %d/%d): %s — retrying in %.1fs",
+                label, attempt + 1, _MAX_RETRIES, exc, wait_s,
+            )
+            time.sleep(wait_s)
+    logger.error("%s failed after %d attempts: %s", label, _MAX_RETRIES, last_exc)
+    raise last_exc  # type: ignore[misc]
 
 # ── Cache configuration ───────────────────────────────────────────────────────
 
@@ -65,22 +109,37 @@ def _cache_valid(paths: dict[str, Path]) -> bool:
 def _fetch_roads(west: float, south: float, east: float, north: float) -> gpd.GeoDataFrame:
     """Return road edges as a GeoDataFrame (geometry=LineString)."""
     bbox = (west, south, east, north)  # osmnx v2: (left, bottom, right, top)
-    G = ox.graph_from_bbox(bbox, network_type="all", retain_all=True)
-    # Convert to GeoDataFrame of edges only
-    # osmnx v2: nodes=False returns only the edges GeoDataFrame, not a tuple
-    edges = ox.convert.graph_to_gdfs(G, nodes=False, edges=True)
-    return edges.reset_index(drop=False)
+
+    def _do_fetch() -> gpd.GeoDataFrame:
+        G = ox.graph_from_bbox(bbox, network_type="all", retain_all=True)
+        # Convert to GeoDataFrame of edges only
+        # osmnx v2: nodes=False returns only the edges GeoDataFrame, not a tuple
+        edges = ox.convert.graph_to_gdfs(G, nodes=False, edges=True)
+        return edges.reset_index(drop=False)
+
+    try:
+        return _retry_with_backoff(_do_fetch, f"graph_from_bbox{bbox}")
+    except Exception as exc:
+        # A region can legitimately have zero roads (e.g. deep forest) — Overpass
+        # raises for an empty graph too. Treat exhausted retries as "no roads"
+        # rather than failing the whole world build.
+        logger.warning("Roads fetch failed after retries, continuing with 0 roads: %s", exc)
+        return gpd.GeoDataFrame(geometry=gpd.GeoSeries([], crs="EPSG:4326"))
 
 
 def _fetch_features(
     west: float, south: float, east: float, north: float, tags: dict
 ) -> gpd.GeoDataFrame:
     bbox = (west, south, east, north)
-    try:
+
+    def _do_fetch() -> gpd.GeoDataFrame:
         gdf = ox.features_from_bbox(bbox, tags=tags)
         return gdf.reset_index(drop=False)
+
+    try:
+        return _retry_with_backoff(_do_fetch, f"features_from_bbox(tags={tags})")
     except Exception as exc:
-        logger.warning("features_from_bbox(%s) returned empty: %s", tags, exc)
+        logger.warning("features_from_bbox(%s) returned empty after retries: %s", tags, exc)
         return gpd.GeoDataFrame(geometry=gpd.GeoSeries([], crs="EPSG:4326"))
 
 

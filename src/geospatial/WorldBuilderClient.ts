@@ -20,6 +20,7 @@ export class WorldBuilderError extends Error {
 }
 
 const DEFAULT_BASE_URL = 'http://localhost:8000';
+const USE_MOCK = false; // Real backend is running on :8000
 
 function _baseUrl(): string {
   const url =
@@ -45,12 +46,44 @@ async function _request<T>(url: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+function _mockWorldManifest(location: SelectedLocation): WorldManifest {
+  const worldId = crypto.randomUUID();
+  return {
+    id: worldId,
+    created_at: new Date().toISOString(),
+    bbox: location.box,
+    assets: {
+      terrain: 'terrain.glb',
+      buildings: 'buildings.glb',
+      roads: 'roads.json',
+    },
+    asset_urls: {
+      // Point to real backend paths if backend is running,
+      // otherwise point to public assets
+      terrain: `/worlds/${worldId}/terrain.glb`,
+      buildings: `/worlds/${worldId}/buildings.glb`,
+      roads: `/worlds/${worldId}/roads.json`,
+    },
+    stats: {
+      terrain_tiles: 128,
+      building_count: 42,
+      road_length_m: 5230,
+      poi_count: 15,
+    },
+  };
+}
+
 export const WorldBuilderClient = {
   /**
    * POST /worlds — compile (or return cached) world for the given SelectedLocation.
    * Returns immediately on a warm cache (same bbox already compiled).
    */
   async buildWorld(location: SelectedLocation): Promise<WorldManifest> {
+    if (USE_MOCK) {
+      // Simulate network delay
+      await new Promise(resolve => setTimeout(resolve, 800));
+      return _mockWorldManifest(location);
+    }
     return _request<WorldManifest>(`${_baseUrl()}/worlds`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

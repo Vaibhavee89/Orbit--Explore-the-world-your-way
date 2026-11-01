@@ -28,6 +28,7 @@ node_modules
 
 # Python
 backend/.venv/
+backend/.venv311/
 __pycache__/
 *.pyc
 *.pyo
@@ -35,3 +36,4 @@ __pycache__/
 backend/worlds/
 backend/.osm_cache/
 backend/.elevation_cache/
+backend/cache/

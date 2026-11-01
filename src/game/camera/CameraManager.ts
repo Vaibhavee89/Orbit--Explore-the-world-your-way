@@ -6,6 +6,11 @@ const DRAG_SENSITIVITY = 0.005;               // rad per pixel
 const ZOOM_SENSITIVITY = 0.1;
 const MIN_RADIUS      = 3;
 const MAX_RADIUS      = 80;
+const MIN_FP_PITCH    = -Math.PI / 2 + 0.05;
+const MAX_FP_PITCH    = Math.PI / 2 - 0.05;
+const FP_EYE_HEIGHT   = 1.6;
+
+export type CameraMode = 'third-person' | 'first-person';
 
 /**
  * Third-person orbit camera.
@@ -25,6 +30,8 @@ export class CameraManager {
   private _phi: number;
   private _radius: number;
   private _lookAtOffset: number;
+  private _mode: CameraMode = 'third-person';
+  private _fpPitch = 0;
 
   private _canvas: HTMLCanvasElement | null = null;
   private _dragging = false;
@@ -44,11 +51,20 @@ export class CameraManager {
     this._lastX = e.clientX;
     this._lastY = e.clientY;
     this._theta -= dx * DRAG_SENSITIVITY;
-    this._phi = THREE.MathUtils.clamp(
-      this._phi + dy * DRAG_SENSITIVITY,
-      MIN_PHI,
-      MAX_PHI,
-    );
+
+    if (this._mode === 'first-person') {
+      this._fpPitch = THREE.MathUtils.clamp(
+        this._fpPitch - dy * DRAG_SENSITIVITY,
+        MIN_FP_PITCH,
+        MAX_FP_PITCH,
+      );
+    } else {
+      this._phi = THREE.MathUtils.clamp(
+        this._phi + dy * DRAG_SENSITIVITY,
+        MIN_PHI,
+        MAX_PHI,
+      );
+    }
   };
 
   private _onMouseUp = () => { this._dragging = false; };
@@ -72,6 +88,14 @@ export class CameraManager {
   /** Current yaw angle (radians). PlayerCapsule uses this for WASD directions. */
   get yaw(): number { return this._theta; }
 
+  get mode(): CameraMode { return this._mode; }
+
+  /** Toggle between third-person orbit and first-person (eye-level, look-direction) camera. */
+  toggleMode(): CameraMode {
+    this._mode = this._mode === 'third-person' ? 'first-person' : 'third-person';
+    return this._mode;
+  }
+
   bind(canvas: HTMLCanvasElement): void {
     this._canvas = canvas;
     canvas.addEventListener('mousedown', this._onMouseDown);
@@ -91,8 +115,27 @@ export class CameraManager {
     this._canvas = null;
   }
 
-  /** Position *camera* on the orbit sphere around *target* and aim it inward. */
+  /**
+   * Position *camera* relative to *target*.
+   * Third-person: orbits on a sphere around the target, looking inward.
+   * First-person: sits at eye height, looking in the yaw/pitch direction.
+   */
   update(camera: THREE.PerspectiveCamera, target: THREE.Vector3): void {
+    if (this._mode === 'first-person') {
+      camera.position.set(target.x, target.y + FP_EYE_HEIGHT, target.z);
+      const lookDir = new THREE.Vector3(
+        Math.sin(this._theta) * Math.cos(this._fpPitch),
+        Math.sin(this._fpPitch),
+        Math.cos(this._theta) * Math.cos(this._fpPitch),
+      );
+      camera.lookAt(
+        camera.position.x + lookDir.x,
+        camera.position.y + lookDir.y,
+        camera.position.z + lookDir.z,
+      );
+      return;
+    }
+
     const sinPhi = Math.sin(this._phi);
     const cosPhi = Math.cos(this._phi);
     camera.position.set(

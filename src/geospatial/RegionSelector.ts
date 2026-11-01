@@ -1,16 +1,4 @@
-import {
-  Viewer,
-  Cartesian2,
-  Cartographic,
-  Rectangle,
-  Entity,
-  Color,
-  ColorMaterialProperty,
-  CallbackProperty,
-  ScreenSpaceEventHandler,
-  ScreenSpaceEventType,
-  Math as CesiumMath,
-} from 'cesium';
+import L from 'leaflet';
 import type { BoundingBox } from './types';
 
 // Re-export so existing callers importing BoundingBox from here still work.
@@ -43,33 +31,23 @@ const M_PER_DEG_LAT = 111_320;
 // ── RegionSelector ───────────────────────────────────────────────────────────
 
 /**
- * Attaches click-and-drag rectangle selection to a Cesium Viewer.
+ * Attaches click-and-drag rectangle selection to a Leaflet Map.
  * Snaps the selected region to ≤ 500 m × 500 m.
- *
- * Usage:
- *   const sel = new RegionSelector(viewer, onChange);
- *   sel.activate();
- *   // user drags...
- *   const box = sel.confirm();   // returns BoundingBox
- *   sel.deactivate();
- *   sel.destroy();
  */
 export class RegionSelector {
-  private readonly viewer: Viewer;
-  private readonly handler: ScreenSpaceEventHandler;
+  private readonly map: L.Map;
   private readonly onChange: (state: RegionState) => void;
 
-  private entity: Entity | null = null;
-  private startCarto: Cartographic | null = null;
+  private rect: L.Rectangle | null = null;
+  private startLat: number | null = null;
+  private startLon: number | null = null;
   private _box: BoundingBox | null = null;
-  private _baseHeight = 0;
   private _dragging = false;
   private _phase: RegionPhase = 'idle';
 
-  constructor(viewer: Viewer, onChange: (state: RegionState) => void) {
-    this.viewer = viewer;
+  constructor(map: L.Map, onChange: (state: RegionState) => void) {
+    this.map = map;
     this.onChange = onChange;
-    this.handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
   }
 
   get phase() { return this._phase; }
@@ -80,34 +58,25 @@ export class RegionSelector {
   activate() {
     this._phase = 'idle';
     this._box = null;
-    this.viewer.scene.canvas.style.cursor = 'crosshair';
-    // Disable default camera drag while drawing.
-    this.viewer.scene.screenSpaceCameraController.enableRotate = false;
-    this.viewer.scene.screenSpaceCameraController.enableTranslate = false;
+    const container = this.map.getContainer();
+    container.style.cursor = 'crosshair';
 
-    this.handler.setInputAction(
-      (e: { position: Cartesian2 }) => this._onDown(e.position),
-      ScreenSpaceEventType.LEFT_DOWN,
-    );
-    this.handler.setInputAction(
-      (e: { endPosition: Cartesian2 }) => this._onMove(e.endPosition),
-      ScreenSpaceEventType.MOUSE_MOVE,
-    );
-    this.handler.setInputAction(
-      (e: { position: Cartesian2 }) => this._onUp(e.position),
-      ScreenSpaceEventType.LEFT_UP,
-    );
+    this.map.on('mousedown', this._onDown, this);
+    this.map.on('mousemove', this._onMove, this);
+    this.map.on('mouseup', this._onUp, this);
+    this.map.dragging.disable();
   }
 
   deactivate() {
-    this.viewer.scene.canvas.style.cursor = '';
-    this.viewer.scene.screenSpaceCameraController.enableRotate = true;
-    this.viewer.scene.screenSpaceCameraController.enableTranslate = true;
-    this.handler.removeInputAction(ScreenSpaceEventType.LEFT_DOWN);
-    this.handler.removeInputAction(ScreenSpaceEventType.MOUSE_MOVE);
-    this.handler.removeInputAction(ScreenSpaceEventType.LEFT_UP);
-    this._clearEntity();
-    this.startCarto = null;
+    const container = this.map.getContainer();
+    container.style.cursor = '';
+    this.map.off('mousedown', this._onDown, this);
+    this.map.off('mousemove', this._onMove, this);
+    this.map.off('mouseup', this._onUp, this);
+    this.map.dragging.enable();
+    this._clearRect();
+    this.startLat = null;
+    this.startLon = null;
     this._dragging = false;
     this._phase = 'idle';
     this._box = null;
@@ -115,7 +84,6 @@ export class RegionSelector {
 
   destroy() {
     this.deactivate();
-    if (!this.handler.isDestroyed()) this.handler.destroy();
   }
 
   confirm(): BoundingBox | null {
@@ -123,111 +91,81 @@ export class RegionSelector {
   }
 
   cancel() {
-    this._clearEntity();
+    this._clearRect();
     this._box = null;
-    this.startCarto = null;
+    this.startLat = null;
+    this.startLon = null;
     this._dragging = false;
     this._phase = 'idle';
     this.onChange({ phase: 'idle', box: null });
   }
 
-  // ── mouse handlers ──────────────────────────────────────────────────────────
-
-  private _onDown(pos: Cartesian2) {
-    const carto = this._pick(pos);
-    if (!carto) return;
-    this._clearEntity();
-    this.startCarto = carto;
-    this._baseHeight = carto.height;
+  private _onDown = (e: L.LeafletMouseEvent) => {
+    const { lat, lng } = e.latlng;
+    this._clearRect();
+    this.startLat = lat;
+    this.startLon = lng;
     this._dragging = true;
     this._phase = 'drawing';
-  }
+  };
 
-  private _onMove(pos: Cartesian2) {
-    if (!this._dragging || !this.startCarto) return;
-    const endCarto = this._pick(pos);
-    if (!endCarto) return;
-    this._box = this._computeBox(this.startCarto, endCarto);
-    this._ensureEntity();
+  private _onMove = (e: L.LeafletMouseEvent) => {
+    if (!this._dragging || this.startLat === null || this.startLon === null) return;
+    const { lat, lng } = e.latlng;
+    this._box = this._computeBox(this.startLat, this.startLon, lat, lng);
+    this._ensureRect();
     this.onChange({ phase: 'drawing', box: this._box });
-  }
+  };
 
-  private _onUp(pos: Cartesian2) {
-    if (!this._dragging || !this.startCarto) return;
-    const endCarto = this._pick(pos) ?? this.startCarto;
-    this._box = this._computeBox(this.startCarto, endCarto);
-    this._ensureEntity();
+  private _onUp = (e: L.LeafletMouseEvent) => {
+    if (!this._dragging || this.startLat === null || this.startLon === null) return;
+    const { lat, lng } = e.latlng;
+    this._box = this._computeBox(this.startLat, this.startLon, lat, lng);
+    this._ensureRect();
     this._dragging = false;
     this._phase = 'drawn';
     this.onChange({ phase: 'drawn', box: this._box });
-  }
+  };
 
-  // ── geometry ────────────────────────────────────────────────────────────────
+  private _computeBox(startLat: number, startLon: number, endLat: number, endLon: number): BoundingBox {
+    const midLat = (startLat + endLat) / 2;
+    const mPerDegLon = M_PER_DEG_LAT * Math.cos(midLat * Math.PI / 180);
 
-  private _pick(screenPos: Cartesian2): Cartographic | null {
-    const world = this.viewer.scene.pickPosition(screenPos);
-    if (!world) return null;
-    return Cartographic.fromCartesian(world);
-  }
+    const rawLatM = (endLat - startLat) * M_PER_DEG_LAT;
+    const rawLonM = (endLon - startLon) * mPerDegLon;
 
-  private _computeBox(start: Cartographic, end: Cartographic): BoundingBox {
-    const midLat = (start.latitude + end.latitude) / 2;
-    const mPerDegLon = M_PER_DEG_LAT * Math.cos(midLat);
-
-    const rawLatM = (end.latitude - start.latitude) * M_PER_DEG_LAT;
-    const rawLonM = (end.longitude - start.longitude) * mPerDegLon;
-
-    // Clamp each axis to 500 m, preserving sign.
     const clampedLatM = Math.sign(rawLatM || 1) * Math.min(Math.abs(rawLatM), MAX_M);
     const clampedLonM = Math.sign(rawLonM || 1) * Math.min(Math.abs(rawLonM), MAX_M);
 
-    const startLatDeg = CesiumMath.toDegrees(start.latitude);
-    const startLonDeg = CesiumMath.toDegrees(start.longitude);
-    const endLatDeg = startLatDeg + clampedLatM / M_PER_DEG_LAT;
-    const endLonDeg = startLonDeg + clampedLonM / mPerDegLon;
+    const endLatDeg = startLat + clampedLatM / M_PER_DEG_LAT;
+    const endLonDeg = startLon + clampedLonM / mPerDegLon;
 
     return {
-      north: Math.max(startLatDeg, endLatDeg),
-      south: Math.min(startLatDeg, endLatDeg),
-      east: Math.max(startLonDeg, endLonDeg),
-      west: Math.min(startLonDeg, endLonDeg),
+      north: Math.max(startLat, endLatDeg),
+      south: Math.min(startLat, endLatDeg),
+      east: Math.max(startLon, endLonDeg),
+      west: Math.min(startLon, endLonDeg),
       widthM: Math.abs(clampedLonM),
       heightM: Math.abs(clampedLatM),
     };
   }
 
-  // ── entity drawing ──────────────────────────────────────────────────────────
-
-  private _ensureEntity() {
-    if (this.entity) return; // CallbackProperty reads this._box live
-    const h = this._baseHeight;
-
-    this.entity = this.viewer.entities.add({
-      rectangle: {
-        // CallbackProperty so the rectangle reacts to this._box changes
-        // without re-creating the entity on every mouse-move.
-        coordinates: new CallbackProperty(() => {
-          if (!this._box) return undefined;
-          return Rectangle.fromDegrees(
-            this._box.west, this._box.south,
-            this._box.east, this._box.north,
-          );
-        }, false),
-        material: new ColorMaterialProperty(Color.CYAN.withAlpha(0.18)),
-        outline: true,
-        outlineColor: Color.CYAN.withAlpha(0.95),
-        outlineWidth: 2,
-        // Render as a thin slab above the tileset surface.
-        height: h,
-        extrudedHeight: h + 8,
-      },
-    });
+  private _ensureRect() {
+    if (this.rect || !this._box) return;
+    const { north, south, east, west } = this._box;
+    this.rect = L.rectangle([[south, west], [north, east]], {
+      color: '#00FFFF',
+      weight: 2,
+      opacity: 0.95,
+      fillColor: '#00FFFF',
+      fillOpacity: 0.18,
+    }).addTo(this.map);
   }
 
-  private _clearEntity() {
-    if (this.entity) {
-      this.viewer.entities.remove(this.entity);
-      this.entity = null;
+  private _clearRect() {
+    if (this.rect) {
+      this.map.removeLayer(this.rect);
+      this.rect = null;
     }
   }
 }

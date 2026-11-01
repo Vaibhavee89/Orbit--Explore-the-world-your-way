@@ -4,12 +4,17 @@ from fastapi.staticfiles import StaticFiles
 
 from app.world_compiler import WORLDS_DIR
 from app.worlds_router import router as worlds_router
+from app.quests_router import router as quests_router
 
 app = FastAPI(title="Orbit Worldbuilder", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:5173",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -21,6 +26,7 @@ async def healthz():
 
 
 app.include_router(worlds_router)
+app.include_router(quests_router)
 
 # Serve world assets (GLBs, roads JSON, manifest) as static files.
 # This mount must come after route definitions so POST /worlds is not shadowed.

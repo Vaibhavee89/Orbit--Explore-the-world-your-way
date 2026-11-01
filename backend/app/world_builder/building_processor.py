@@ -210,9 +210,35 @@ def process_buildings(
             })
 
     if not geometries:
-        raise ValueError(
-            f"No buildings could be extruded (skipped {skipped}). "
-            "Check that the GeoDataFrame contains valid polygon geometries."
+        # No buildings in this region (e.g. forest, park, rural area) — this is
+        # a valid outcome, not an error. Export an empty scene so the rest of
+        # the world (terrain + roads) still compiles successfully.
+        logger.warning(
+            "No buildings found in region (skipped %d). Exporting empty buildings.glb.",
+            skipped,
+        )
+        scene = trimesh.Scene()
+        scene.export(str(output_path))
+
+        phys_path: Path | None = None
+        if physics_path is not None:
+            phys_path = Path(physics_path)
+            phys_path.write_text(json.dumps([]))
+
+        return BuildingMesh(
+            glb_path=output_path,
+            building_count=0,
+            skipped_count=skipped,
+            bbox=(west, south, east, north),
+            physics_path=phys_path,
+            stats={
+                "buildings": 0,
+                "skipped": skipped,
+                "height_min_m": 0.0,
+                "height_max_m": 0.0,
+                "height_mean_m": 0.0,
+                "default_pct": 0.0,
+            },
         )
 
     scene = trimesh.Scene(geometries)
