@@ -131,7 +131,6 @@ optimize_file() {
     size_after=$(file_size "$tmp")
 
     if (( size_after > 0 )); then
-      mv "$tmp" "$input"
       local saved=$(( size_before - size_after ))
       local pct=0
       if (( size_before > 0 )); then
@@ -143,11 +142,12 @@ optimize_file() {
       (( COUNT_OK++ )) || true
 
       if (( saved >= 0 )); then
+        mv "$tmp" "$input"
         printf "  %-40s  %s → %s  (-%d%%)\n" \
           "$filename" "$(human "$size_before")" "$(human "$size_after")" "$pct"
       else
-        # Optimizer made it larger — keep original.
-        cp "$input" "$tmp"  # tmp is now the optimized (larger) version
+        # Optimizer made it larger — keep original, discard the temp output.
+        rm -f "$tmp"
         printf "  %-40s  %s → %s  (no gain, kept original)\n" \
           "$filename" "$(human "$size_before")" "$(human "$size_after")"
         # Revert totals to original size.
