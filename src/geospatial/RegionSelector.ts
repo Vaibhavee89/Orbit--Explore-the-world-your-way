@@ -120,9 +120,22 @@ export class RegionSelector {
   private _onUp = (e: L.LeafletMouseEvent) => {
     if (!this._dragging || this.startLat === null || this.startLon === null) return;
     const { lat, lng } = e.latlng;
-    this._box = this._computeBox(this.startLat, this.startLon, lat, lng);
-    this._ensureRect();
+    const box = this._computeBox(this.startLat, this.startLon, lat, lng);
     this._dragging = false;
+
+    // A click without dragging (or a release at the start point) produces a
+    // zero-area box. Reject it rather than letting the caller Confirm/Build
+    // a degenerate region.
+    if (box.widthM < 1 || box.heightM < 1) {
+      this._clearRect();
+      this._box = null;
+      this._phase = 'idle';
+      this.onChange({ phase: 'idle', box: null });
+      return;
+    }
+
+    this._box = box;
+    this._ensureRect();
     this._phase = 'drawn';
     this.onChange({ phase: 'drawn', box: this._box });
   };

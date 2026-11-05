@@ -25,23 +25,26 @@ are interchangeable across rigs (standard Mixamo / Quaternius skeleton).
    animation included.  You need at minimum: **Idle**, **Walking**, **Running**, **Jump**.
 4. Click **Download** → format **FBX for Unity** (binary).
 5. Repeat for all 4 animations (or export multiple at once if your Mixamo tier allows).
-6. Convert the FBX → GLB:
+6. Combine the 4 FBX files onto one shared skeleton and export a single GLB.
 
-```bash
-# Install once
-npm install -g @gltf-transform/cli
+   `gltf-transform` does **not** read FBX (it only converts between
+   glTF/GLB variants), and `gltf-transform merge` combines separate scenes
+   rather than retargeting animations onto one shared rig — neither step
+   produces what's needed here. Use **Blender** instead (free):
 
-# Convert (repeat for each FBX)
-gltf-transform convert xbot_idle.fbx   xbot_idle.glb
-gltf-transform convert xbot_walk.fbx   xbot_walk.glb
-gltf-transform convert xbot_run.fbx    xbot_run.glb
-gltf-transform convert xbot_jump.fbx   xbot_jump.glb
+   a. In Blender, **File → Import → FBX** the first clip (e.g. Idle) —
+      this becomes your base rig.
+   b. For each remaining clip (Walk, Run, Jump): **File → Import → FBX**
+      again, then in the **Action Editor** / **NLA Editor**, copy that
+      action onto the base rig's armature (Mixamo exports share the same
+      skeleton, so actions transfer directly — no retargeting needed) and
+      delete the duplicate imported armature/mesh.
+   c. With only the base rig + mesh + all 4 actions remaining, **File →
+      Export → glTF 2.0 (.glb)**, with **Animation → Export all actions**
+      enabled.
 
-# Merge all animations into one GLB (keeps the same skeleton)
-gltf-transform merge xbot_idle.glb xbot_walk.glb xbot_run.glb xbot_jump.glb xbot.glb
-```
-
-7. Verify the result:
+7. Verify the result (this step is still accurate — `gltf-transform` reads
+   GLB fine, it just can't produce one from FBX):
 
 ```bash
 gltf-transform inspect xbot.glb

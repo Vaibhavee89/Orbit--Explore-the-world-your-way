@@ -3,12 +3,31 @@ import type { SelectedLocation, BoundingBox } from './types';
 const STORAGE_KEY = 'orbit_selected_locations_v1';
 const MAX_SAVED = 5;
 
+function isValidSelectedLocation(v: unknown): v is SelectedLocation {
+  if (!v || typeof v !== 'object') return false;
+  const l = v as Partial<SelectedLocation>;
+  return (
+    typeof l.id === 'string' &&
+    typeof l.label === 'string' &&
+    typeof l.savedAt === 'number' &&
+    !!l.box &&
+    typeof l.box.north === 'number' &&
+    typeof l.box.south === 'number' &&
+    typeof l.box.east === 'number' &&
+    typeof l.box.west === 'number' &&
+    !!l.center &&
+    typeof l.center.lat === 'number' &&
+    typeof l.center.lon === 'number'
+  );
+}
+
 function readRaw(): SelectedLocation[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isValidSelectedLocation);
   } catch {
     return [];
   }

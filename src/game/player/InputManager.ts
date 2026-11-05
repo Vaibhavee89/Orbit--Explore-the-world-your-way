@@ -4,12 +4,22 @@
  * Provides normalised movement intent, edge-triggered jump, and sprint state.
  * Replaces InputState for game use; InputState remains for simpler tools.
  */
+/** Keys that scroll the page by default — suppressed during gameplay. */
+const GAME_KEYS = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+
 export class InputManager {
   private _keys        = new Set<string>();
   private _justPressed = new Set<string>();
   private _el: HTMLElement | Window | null = null;
 
   private _onDown = (e: KeyboardEvent) => {
+    // Without this, the browser scrolls the embedded page on these keys
+    // while the player moves/jumps. Skip when typing in an editable element
+    // so search fields etc. still work normally.
+    const t = e.target as HTMLElement | null;
+    const editable = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    if (!editable && GAME_KEYS.has(e.code)) e.preventDefault();
+
     if (!this._keys.has(e.code)) this._justPressed.add(e.code);
     this._keys.add(e.code);
   };

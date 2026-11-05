@@ -54,6 +54,10 @@ export class Game {
   private _prompt:            InteractionPrompt   | null = null;
   // Initialised in start() from localStorage; falls back to 'soldier'.
   private _activeCharacterId = 'soldier';
+  // Bumped by dispose() so in-flight async loads (loadWorld/loadLocalWorld/
+  // _loadAvatar) can detect a mid-flight exit and stop touching nulled state
+  // instead of throwing or mutating an orphaned SceneManager/PhysicsWorld.
+  private _sessionId = 0;
 
   get running(): boolean { return this._loop.running; }
 
@@ -225,6 +229,7 @@ export class Game {
    */
   async loadWorld(manifest: WorldManifest): Promise<void> {
     if (!this._scene || !this._physics) throw new Error('Game not started');
+    const sessionId = this._sessionId;
 
     // Remove demo cube.
     if (this._cube) {
@@ -234,12 +239,26 @@ export class Game {
       this._cube = null;
     }
 
-    // Load visual assets in parallel.
-    await Promise.all([
+    // Load visual assets. Terrain is required; buildings/roads are optional
+    // decoration — a failed fetch for either shouldn't abort the whole
+    // startup and leave the player stuck with a cube-less, uncollidable
+    // scene. allSettled so one rejection can't short-circuit the others.
+    const [terrainResult, buildingsResult, roadsResult] = await Promise.allSettled([
       new WorldLoader().load(manifest, this._scene),
       new BuildingLoader().load(manifest, this._scene),
       new RoadLoader().load(manifest, this._scene),
     ]);
+    if (this._sessionId !== sessionId) return; // dispose() ran during the load — bail, nothing left to touch.
+    if (terrainResult.status === 'rejected') {
+      console.error('[Game] Terrain load failed — world cannot start:', terrainResult.reason);
+      throw terrainResult.reason;
+    }
+    if (buildingsResult.status === 'rejected') {
+      console.warn('[Game] Building load failed, continuing without buildings:', buildingsResult.reason);
+    }
+    if (roadsResult.status === 'rejected') {
+      console.warn('[Game] Road load failed, continuing without roads:', roadsResult.reason);
+    }
 
     // Swap flat ground → terrain heightfield + building colliders.
     if (this._groundCollider) {
@@ -288,6 +307,8 @@ export class Game {
         console.warn(`[Game] Failed to place "${id}":`, err);
       }
     }
+
+    if (this._sessionId !== sessionId) return; // dispose() ran mid-placement — bail.
 
     // Load GLB avatar using the active character from the library.
     await this._loadAvatar(this._activeCharacterId, spawnY);
@@ -363,7 +384,9 @@ export class Game {
   get activeCharacterId(): string { return this._activeCharacterId; }
 
   private async _loadAvatar(id: string, spawnY: number): Promise<void> {
-    if (!this._scene) return;
+    const scene = this._scene;
+    if (!scene) return;
+    const sessionId = this._sessionId;
     let entry;
     try {
       entry = CharacterLibrary.default.getCharacter(id);
@@ -373,15 +396,23 @@ export class Game {
     }
 
     try {
-      const avatar = await Player.load(entry.url, this._scene, entry.clipAliases ?? {}, id);
+      const avatar = await Player.load(entry.url, scene, entry.clipAliases ?? {}, id);
+      if (this._sessionId !== sessionId) {
+        // dispose() ran while the GLB was loading — this scene is already
+        // torn down. Don't touch this._avatar/this._capsule; just free the
+        // orphaned load so it doesn't leak GPU resources.
+        avatar.dispose(scene);
+        return;
+      }
       avatar.setPosition(0, spawnY, 0);
       // Dispose old avatar; capsule stays hidden until next loadWorld if avatar fails.
-      this._avatar?.dispose(this._scene);
-      this._capsule?.dispose(this._scene);
+      this._avatar?.dispose(scene);
+      this._capsule?.dispose(scene);
       this._capsule = null;
       this._avatar  = avatar;
       console.info(`[Game] Avatar active: "${id}"`);
     } catch (err) {
+      if (this._sessionId !== sessionId) return; // stale — game already disposed.
       if (!this._avatar) {
         // No avatar yet — keep the capsule as fallback.
         this._capsule?.setPosition(0, spawnY, 0);
@@ -412,6 +443,7 @@ export class Game {
   }
 
   dispose(): void {
+    this._sessionId++;
     this.stop();
     this._input?.unbind();
     this._camMgr?.unbind();

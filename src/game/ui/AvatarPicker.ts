@@ -51,8 +51,10 @@ export class AvatarPicker {
 
   constructor(container: HTMLElement) {
     this._selected = getSavedCharacter();
-    this._overlay  = this._buildOverlay(container);
+    // _buildOverlay reads this._preview.canvas — must exist first, or the
+    // constructor throws (this._preview is undefined at that point).
     this._preview  = new CharacterPreview(280, 380);
+    this._overlay  = this._buildOverlay(container);
   }
 
   onConfirm(handler: (characterId: string) => void): void {
@@ -128,7 +130,6 @@ export class AvatarPicker {
       border:       '1px solid rgba(255,255,255,0.08)',
       flexShrink:   '0',
     });
-    // Canvas is appended in show() after _preview is created.
     card.appendChild(previewWrap);
     this._preview.canvas.style.display = 'block';
     previewWrap.appendChild(this._preview.canvas);

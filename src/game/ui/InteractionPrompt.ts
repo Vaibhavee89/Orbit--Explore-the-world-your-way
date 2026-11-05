@@ -55,7 +55,12 @@ export class InteractionPrompt {
       userSelect:      'none',
       zIndex:          '100',
     });
-    container.style.position ||= 'relative'; // ensure absolute children are clipped
+    // Check the computed style, not just the inline style — a stylesheet may
+    // already position this container (e.g. absolute), and forcing relative
+    // inline would silently override it and break the parent's layout.
+    if (getComputedStyle(container).position === 'static') {
+      container.style.position = 'relative'; // anchor the absolute prompt
+    }
     container.appendChild(this._el);
     window.addEventListener('keydown', this._onKeyDown);
   }

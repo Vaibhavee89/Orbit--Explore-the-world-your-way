@@ -58,26 +58,35 @@ export class LocationSelector extends LitElement {
   private _onInput(e: Event) {
     this._query = (e.target as HTMLInputElement).value;
     this._activeIdx = -1;
+    // Discard any stale results immediately — otherwise a slow in-flight
+    // request for the previous query can still land and briefly show
+    // results that don't match what's now in the input.
+    this._results = [];
+    this._open = false;
 
     clearTimeout(this._debounceTimer);
-    if (this._query.trim().length < 2) {
-      this._results = [];
-      this._open = false;
-      return;
-    }
+    if (this._query.trim().length < 2) return;
     this._debounceTimer = window.setTimeout(() => this._fetch(), DEBOUNCE_MS);
   }
 
   private async _fetch() {
     if (!this.apiKey || !this._query.trim()) return;
+    // Capture the query this request is for. If the user types again before
+    // it resolves, _query will have moved on — only commit the response
+    // while it's still current, so a later-arriving response for an older
+    // query can't overwrite newer results (or let Enter select the wrong
+    // destination).
+    const requestQuery = this._query;
     this._loading = true;
     try {
-      this._results = await this._geocode(this._query);
+      const results = await this._geocode(requestQuery);
+      if (this._query !== requestQuery) return; // superseded by a newer query
+      this._results = results;
       this._open = this._results.length > 0;
     } catch (err) {
       console.error('[LocationSelector] geocode error:', err);
     } finally {
-      this._loading = false;
+      if (this._query === requestQuery) this._loading = false;
     }
   }
 
