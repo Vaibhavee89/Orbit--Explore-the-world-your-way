@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+osmnx
+geopandas
+shapely
+rasterio
+pyproj
+trimesh
+numpy
+scipy
+mapbox-earcut
+httpx
+aiofiles
