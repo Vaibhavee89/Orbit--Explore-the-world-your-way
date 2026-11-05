@@ -86,14 +86,19 @@ def _manifest_to_response(manifest: WorldManifest) -> WorldManifestResponse:
 # ── POST /worlds ──────────────────────────────────────────────────────────────
 
 @router.post("", status_code=201, response_model=WorldManifestResponse)
-async def create_world(body: SelectedLocation) -> WorldManifestResponse:
+def create_world(body: SelectedLocation) -> WorldManifestResponse:
     """
     Compile (or return cached) world assets for the given SelectedLocation.
 
     Extracts the bounding box from ``body.box`` and runs the full pipeline:
       fetch OSM → elevation → terrain mesh → buildings → road graph → manifest
 
-    On a warm cache this typically completes in < 5 s.
+    On a warm cache this typically completes in < 5 s; cold-cache builds can
+    take minutes. compile_world() is synchronous (Overpass calls, urllib tile
+    downloads, raster processing, mesh export) — a plain `def` here (not
+    `async def`) makes FastAPI run it in its worker threadpool, so a
+    long-running compile doesn't block the single event loop from serving
+    /healthz, GET /worlds/{id}, or static GLB downloads for other clients.
     """
     box = body.box
     try:

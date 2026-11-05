@@ -101,8 +101,14 @@ class TestGraphStructure:
         assert len(graph.nodes) > 100
 
     def test_manali_edge_count(self, graph: RoadGraph):
-        """307 road edges should all be preserved."""
-        assert len(graph.edges) == 307
+        """Manali bbox should yield a substantial road network.
+
+        Not an exact count: this fixture fetches live Overpass data (cold
+        cache, after the 7-day TTL, or after test_force_refresh_bypasses_cache
+        rewrites the cache), and any OSM edit inside the bbox changes the
+        edge count. Assert a generous lower bound instead of an exact value.
+        """
+        assert len(graph.edges) > 100
 
     def test_total_length_positive(self, graph: RoadGraph):
         assert graph.stats["total_length_m"] > 0

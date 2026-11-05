@@ -260,21 +260,33 @@ def fetch_osm_data(
                 elapsed, stats["roads"], stats["buildings"], stats["pois"])
 
     # Persist to cache
-    def _save(gdf: gpd.GeoDataFrame, path: Path) -> None:
-        if not gdf.empty:
-            # GPKG driver chokes on list/dict column values; drop them.
-            safe = gdf[[c for c in gdf.columns
-                         if gdf[c].dtype.name not in ("object",) or c == "geometry"
-                         or gdf[c].apply(lambda v: isinstance(v, (str, type(None), float, int, bool))).all()]]
-            try:
-                safe.to_file(path, driver="GPKG")
-            except Exception as exc:
-                logger.warning("Cache write failed for %s: %s", path, exc)
+    def _save(gdf: gpd.GeoDataFrame, path: Path) -> bool:
+        if gdf.empty:
+            return True
+        # GPKG driver chokes on list/dict column values; drop them.
+        safe = gdf[[c for c in gdf.columns
+                     if gdf[c].dtype.name not in ("object",) or c == "geometry"
+                     or gdf[c].apply(lambda v: isinstance(v, (str, type(None), float, int, bool))).all()]]
+        try:
+            safe.to_file(path, driver="GPKG")
+            return True
+        except Exception as exc:
+            logger.warning("Cache write failed for %s: %s", path, exc)
+            return False
 
-    _save(roads, paths["roads"])
-    _save(buildings, paths["buildings"])
-    _save(pois, paths["pois"])
-    paths["meta"].write_text(json.dumps({"fetched_at": time.time(), "stats": stats}))
+    all_saved = (
+        _save(roads, paths["roads"])
+        & _save(buildings, paths["buildings"])
+        & _save(pois, paths["pois"])
+    )
+    # Only mark the cache valid if every non-empty layer actually made it to
+    # disk. Otherwise a write failure (e.g. disk full) would make the next
+    # call silently treat missing layers as "zero buildings/roads" for up to
+    # _CACHE_TTL_S, instead of retrying the fetch.
+    if all_saved:
+        paths["meta"].write_text(json.dumps({"fetched_at": time.time(), "stats": stats}))
+    else:
+        logger.warning("Skipping cache metadata for bbox %s — one or more layer writes failed", bbox)
 
     return OSMData(roads=roads, buildings=buildings, pois=pois,
                    bbox=bbox, from_cache=False, stats=stats)

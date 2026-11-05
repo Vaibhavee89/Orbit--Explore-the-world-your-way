@@ -99,6 +99,10 @@ def generate_terrain_mesh(
     grid_size: int = 128,
     output_path: Path | str | None = None,
     heightmap_path: Path | str | None = None,
+    west: float | None = None,
+    south: float | None = None,
+    east: float | None = None,
+    north: float | None = None,
 ) -> TerrainMesh:
     """
     Convert a GeoTIFF elevation raster to a GLB terrain mesh.
@@ -161,16 +165,27 @@ def generate_terrain_mesh(
     lon_grid, lat_grid = np.meshgrid(lons, lats)   # shape (rows, cols)
 
     # ── 3. ENU frame at bbox centroid ─────────────────────────────────────────
-    origin_lat = (bounds.bottom + bounds.top)  / 2
-    origin_lon = (bounds.left   + bounds.right) / 2
+    # Anchor at the REQUESTED bbox centroid (when given) — the same origin
+    # building_processor.py and road_processor.py use. Falling back to the
+    # cropped raster's own bounds (as before) would anchor terrain a few
+    # pixels off from buildings/roads, since all_touched=True cropping and
+    # reprojection both expand/snap the raster extent.
+    if west is not None and south is not None and east is not None and north is not None:
+        origin_lat = (south + north) / 2
+        origin_lon = (west + east) / 2
+    else:
+        origin_lat = (bounds.bottom + bounds.top)  / 2
+        origin_lon = (bounds.left   + bounds.right) / 2
     frame = ENUFrame(origin_lat, origin_lon)
 
-    east, north = _latlon_to_en_vectorized(lat_grid, lon_grid, frame)
+    # Named enu_east/enu_north (not east/north) — those names are already the
+    # bbox float parameters above; reusing them here would shadow the params.
+    enu_east, enu_north = _latlon_to_en_vectorized(lat_grid, lon_grid, frame)
 
     # ── 4. Vertices & faces ───────────────────────────────────────────────────
     vertices = np.column_stack([
-        east.ravel().astype(np.float32),
-        north.ravel().astype(np.float32),
+        enu_east.ravel().astype(np.float32),
+        enu_north.ravel().astype(np.float32),
         elevation.ravel().astype(np.float32),
     ])
     faces = _grid_faces(grid_size, grid_size)
@@ -196,10 +211,10 @@ def generate_terrain_mesh(
             # Row-major (C order): heights[r * ncols + c] = elev at (row=r, col=c).
             # The frontend must transpose to column-major before passing to Rapier.
             "heights":     [round(float(v), 2) for v in elevation.ravel()],
-            "east_min":    round(float(east.min()), 2),
-            "east_max":    round(float(east.max()), 2),
-            "north_min":   round(float(north.min()), 2),
-            "north_max":   round(float(north.max()), 2),
+            "east_min":    round(float(enu_east.min()), 2),
+            "east_max":    round(float(enu_east.max()), 2),
+            "north_min":   round(float(enu_north.min()), 2),
+            "north_max":   round(float(enu_north.max()), 2),
             "z_min":       round(float(z_vals.min()), 2),
             "z_max":       round(float(z_vals.max()), 2),
         }

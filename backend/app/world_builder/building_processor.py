@@ -116,11 +116,13 @@ def _geom_to_enu_poly(poly: Polygon, frame: ENUFrame) -> Polygon | None:
     return None
 
 
-def _try_extrude(enu_poly: Polygon, height: float) -> trimesh.Trimesh | None:
-    """Extrude a 2D ENU polygon to a prism mesh. Returns None on failure."""
+def _try_extrude(enu_poly: Polygon, height: float, base_z: float = 0.0) -> trimesh.Trimesh | None:
+    """Extrude a 2D ENU polygon to a prism mesh, based at base_z. Returns None on failure."""
     try:
         mesh = trimesh.creation.extrude_polygon(enu_poly, height)
         if mesh is not None and len(mesh.vertices) > 0:
+            if base_z:
+                mesh.apply_translation([0.0, 0.0, base_z])
             return mesh
     except Exception as exc:
         logger.debug("extrude_polygon failed: %s", exc)
@@ -139,6 +141,7 @@ def process_buildings(
     output_path: Path | str,
     physics_path: Path | str | None = None,
     default_height: float = _DEFAULT_HEIGHT,
+    terrain_base_z: float = 0.0,
 ) -> BuildingMesh:
     """
     Extrude building footprints and export a combined GLB.
@@ -156,6 +159,12 @@ def process_buildings(
         per-building AABB records used to create Rapier cuboid colliders.
     default_height : float
         Fallback height in metres when no OSM height tag is found.
+    terrain_base_z : float
+        Elevation (local terrain frame, see terrain_processor.py) to place
+        each building's base at. Buildings otherwise assume a flat Z=0
+        ground plane, which is wrong whenever the region has real relief —
+        callers should pass the terrain mesh's z_mean (or a per-footprint
+        sample for full accuracy). Defaults to 0.0 for flat/no-terrain callers.
 
     Returns
     -------
@@ -189,7 +198,7 @@ def process_buildings(
                 skipped += 1
                 continue
 
-            mesh = _try_extrude(enu_poly, height)
+            mesh = _try_extrude(enu_poly, height, terrain_base_z)
             if mesh is None:
                 skipped += 1
                 continue
@@ -198,12 +207,12 @@ def process_buildings(
             geometries[key] = mesh
             heights.append(height)
 
-            # AABB in ENU space: base at Z=0, top at Z=height.
+            # AABB in ENU space: base at terrain_base_z, top at base + height.
             min_e, min_n, max_e, max_n = enu_poly.bounds
             physics_records.append({
                 "center_e": round((min_e + max_e) / 2, 2),
                 "center_n": round((min_n + max_n) / 2, 2),
-                "center_z": round(height / 2, 2),
+                "center_z": round(terrain_base_z + height / 2, 2),
                 "half_e":   round((max_e - min_e) / 2, 2),
                 "half_n":   round((max_n - min_n) / 2, 2),
                 "half_z":   round(height / 2, 2),

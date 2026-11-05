@@ -158,17 +158,32 @@ def compile_world(
     world_dir = _worlds_dir / world_id
     manifest_path = world_dir / "manifest.json"
 
-    # Return existing manifest if present and not forcing a refresh
+    # Return existing manifest if present and not forcing a refresh — but
+    # only if its physics sidecars actually exist on disk. A WORLDS_DIR
+    # reused from an earlier revision (or a partial/interrupted compile)
+    # could have a manifest.json listing heightmap.json/buildings_physics.json
+    # that were never written; serving that manifest would silently leave
+    # the client to fall back to flat-ground physics.
     if not force_refresh and manifest_path.exists():
         data = json.loads(manifest_path.read_text())
-        return WorldManifest(
-            id=data["id"],
-            created_at=data["created_at"],
-            bbox=data["bbox"],
-            assets=data["assets"],
-            stats=data.get("stats", {}),
-            pointsOfInterest=data.get("pointsOfInterest", []),
-            challenges=data.get("challenges", []),
+        assets = data.get("assets", {})
+        required_sidecars = ("heightmap", "buildings_physics")
+        sidecars_present = all(
+            assets.get(name) and (world_dir / assets[name]).is_file()
+            for name in required_sidecars
+        )
+        if sidecars_present:
+            return WorldManifest(
+                id=data["id"],
+                created_at=data["created_at"],
+                bbox=data["bbox"],
+                assets=data["assets"],
+                stats=data.get("stats", {}),
+                pointsOfInterest=data.get("pointsOfInterest", []),
+                challenges=data.get("challenges", []),
+            )
+        logger.warning(
+            "Cached manifest for %s is missing physics sidecars — recompiling", world_id,
         )
 
     world_dir.mkdir(parents=True, exist_ok=True)
@@ -187,14 +202,20 @@ def compile_world(
         elev.tif_path,
         output_path=world_dir / "terrain.glb",
         heightmap_path=world_dir / "heightmap.json",
+        west=west, south=south, east=east, north=north,
     )
 
     # ── 4. Building prisms ────────────────────────────────────────────────────
+    # terrain_base_z: buildings would otherwise assume a flat Z=0 ground
+    # plane, which is wrong whenever the region has real relief (the mesh
+    # and its collider would sit below/above the actual terrain surface).
+    # z_mean is a region-wide approximation, not a per-footprint sample.
     buildings = process_buildings(
         osm.buildings,
         west, south, east, north,
         output_path=world_dir / "buildings.glb",
         physics_path=world_dir / "buildings_physics.json",
+        terrain_base_z=terrain.z_mean,
     )
 
     # ── 5. Road graph ─────────────────────────────────────────────────────────
