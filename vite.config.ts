@@ -13,6 +13,16 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         host: '0.0.0.0',
       },
+      // @dimforge/rapier3d loads its WASM via a top-level await.
+      // vite-plugin-wasm needs either a companion top-level-await plugin or
+      // an esnext build target to support that — vite-plugin-top-level-await
+      // is currently broken against this project's Vite/SWC/esbuild
+      // versions (crashes mid-build with "missing field `type`"), so esnext
+      // is the working fix here. Requires modern browsers (Chrome 89+,
+      // Firefox 89+, Safari 15+ — acceptable for a WebGL2 3D game).
+      build: {
+        target: 'esnext',
+      },
       plugins: [
         wasm(),
         viteStaticCopy({

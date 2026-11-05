@@ -94,9 +94,17 @@ export class AssetPlacer {
     this._scene.add(mesh);
 
     // ── 3. Sensor collider (non-solid, triggers intersection queries) ────────
+    // The sensor has no parent body (Rapier treats it as fixed), and the
+    // player collider belongs to a kinematicPositionBased body — the default
+    // active collision types don't enable detection between two non-dynamic
+    // bodies. Without KINEMATIC_FIXED, intersectionPair() always returns
+    // false and the pickup prompt never fires.
     const sensorDesc = RAPIER.ColliderDesc
       .ball(interactionRadius)
       .setSensor(true)
+      .setActiveCollisionTypes(
+        RAPIER.ActiveCollisionTypes.DEFAULT | RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED,
+      )
       .setTranslation(e, worldY + halfH, threeZ);
     const sensor = this._physics.world.createCollider(sensorDesc);
 

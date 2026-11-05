@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { createGltfLoader } from '../../game/world/gltfLoaderFactory';
 
 /**
  * Parsed result returned from Vi3WAssetImporter.
@@ -31,7 +32,10 @@ export class Vi3WAssetImporter {
   private _loader: GLTFLoader;
 
   constructor(loader?: GLTFLoader) {
-    this._loader = loader ?? new GLTFLoader();
+    // createGltfLoader() configures Draco/Meshopt decoders — without them,
+    // the optimized (draco-compressed) Vi3W assets fail to load silently
+    // and fall back to a placeholder sphere.
+    this._loader = loader ?? createGltfLoader();
   }
 
   /** Load a GLB/GLTF from a URL and return a Vi3WAsset. */

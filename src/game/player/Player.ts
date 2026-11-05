@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { AnimationController, type AnimState } from './AnimationController';
 import type { ClipAliases } from './CharacterLibrary';
 import type { SceneManager } from '../rendering/SceneManager';
+import { createGltfLoader } from '../world/gltfLoaderFactory';
 
 // Capsule geometry constants (must match CharacterController and PlayerCapsule).
 // Capsule half-height 0.6, radius 0.4 → total height 2.0 m, centre-to-feet = 1.0 m.
@@ -103,6 +103,16 @@ export class Player {
     scene.remove(this.root);
     this._animCtrl.dispose();
     this._mixer.uncacheRoot(this.root);
+    // scene.remove() happens first, so SceneManager.dispose()'s own
+    // traversal (which only visits objects still in the scene) never sees
+    // this avatar's meshes — their geometry/materials/textures would leak
+    // on the GPU every Enter World / Exit cycle without this.
+    this.root.traverse(obj => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      obj.geometry.dispose();
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach(m => m.dispose());
+    });
   }
 
   /**
@@ -120,7 +130,7 @@ export class Player {
     clipAliases:  ClipAliases = {},
     label         = url,
   ): Promise<Player> {
-    const loader = new GLTFLoader();
+    const loader = createGltfLoader();
     const gltf   = await loader.loadAsync(url);
     const root   = gltf.scene as THREE.Group;
 

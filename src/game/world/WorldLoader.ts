@@ -1,13 +1,14 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import type { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 import type { SceneManager } from '../rendering/SceneManager';
+import { createGltfLoader } from './gltfLoaderFactory';
 
 const DEFAULT_BASE_URL = 'http://localhost:8000';
 
 function _backendBase(): string {
   const url =
-    (typeof process !== 'undefined' && process.env.VITE_WORLDBUILDER_API_URL) || '';
+    import.meta.env.VITE_WORLDBUILDER_API_URL || '';
   return url || DEFAULT_BASE_URL;
 }
 
@@ -42,7 +43,7 @@ export interface WorldAssets {
 }
 
 export class WorldLoader {
-  private _loader = new GLTFLoader();
+  private _loader = createGltfLoader();
 
   /**
    * Load terrain GLB from manifest, add it to scene, return loaded assets.

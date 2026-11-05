@@ -60,7 +60,12 @@ export class HeightfieldLoader {
     const northExtent = north_max - north_min;
     const scale = { x: eastExtent, y: 1.0, z: northExtent };
 
-    const desc = RAPIER.ColliderDesc.heightfield(nrows, ncols, colMajor, scale);
+    // Rapier's heightfield(nrows, ncols, ...) expects SUBDIVISION counts
+    // (cells), not sample-point counts — passing the sample grid dimensions
+    // directly throws "RuntimeError: unreachable" in @dimforge/rapier3d
+    // 0.21.0 for non-square grids. Same convention already used correctly
+    // in LocalWorldLoader.ts's own heightfield construction.
+    const desc = RAPIER.ColliderDesc.heightfield(nrows - 1, ncols - 1, colMajor, scale);
     // Heightfield is centered at origin by default — terrain mesh is also
     // centered at ENU origin (0, 0, 0).
     const collider = physics.world.createCollider(desc);

@@ -24,7 +24,7 @@ const USE_MOCK = false; // Real backend is running on :8000
 
 function _baseUrl(): string {
   const url =
-    (typeof process !== 'undefined' && process.env.VITE_WORLDBUILDER_API_URL) || '';
+    import.meta.env.VITE_WORLDBUILDER_API_URL || '';
   return url || DEFAULT_BASE_URL;
 }
 

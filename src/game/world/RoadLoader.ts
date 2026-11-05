@@ -5,7 +5,7 @@ import type { SceneManager } from '../rendering/SceneManager';
 const DEFAULT_BASE_URL = 'http://localhost:8000';
 
 function _backendBase(): string {
-  const url = (typeof process !== 'undefined' && process.env.VITE_WORLDBUILDER_API_URL) || '';
+  const url = import.meta.env.VITE_WORLDBUILDER_API_URL || '';
   return url || DEFAULT_BASE_URL;
 }
 

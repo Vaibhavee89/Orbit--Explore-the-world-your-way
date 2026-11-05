@@ -1,17 +1,17 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { createGltfLoader } from './gltfLoaderFactory';
 import type { WorldManifest } from '../../geospatial/WorldBuilderClient';
 import type { SceneManager } from '../rendering/SceneManager';
 
 const DEFAULT_BASE_URL = 'http://localhost:8000';
 
 function _backendBase(): string {
-  const url = (typeof process !== 'undefined' && process.env.VITE_WORLDBUILDER_API_URL) || '';
+  const url = import.meta.env.VITE_WORLDBUILDER_API_URL || '';
   return url || DEFAULT_BASE_URL;
 }
 
 export class BuildingLoader {
-  private _loader = new GLTFLoader();
+  private _loader = createGltfLoader();
 
   async load(manifest: WorldManifest, scene: SceneManager): Promise<THREE.Group> {
     const url = `${_backendBase()}${manifest.asset_urls['buildings']}`;

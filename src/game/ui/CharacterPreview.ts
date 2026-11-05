@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { CharacterEntry } from '../player/CharacterLibrary';
+import { createGltfLoader } from '../world/gltfLoaderFactory';
 
 const TARGET_HEIGHT = 1.8;
 const IDLE_NAMES    = ['idle', 'standing idle', 'breathing idle'];
@@ -24,7 +24,10 @@ export class CharacterPreview {
   private _rotY      = 0;
   private _rafId     = 0;
   private _lastTime  = 0;
-  private _loading   = false;
+  // Monotonic counter (not a boolean) — lets a superseded load detect it was
+  // superseded even though another load is already in progress when it
+  // resolves. A boolean can't distinguish "my load" from "a newer load".
+  private _loadId    = 0;
 
   constructor(width: number, height: number) {
     this.canvas = document.createElement('canvas');
@@ -60,12 +63,12 @@ export class CharacterPreview {
    * Safe to call multiple times (previous model is disposed).
    */
   async loadCharacter(entry: CharacterEntry): Promise<void> {
-    this._loading = true;
+    const id = ++this._loadId;
     this._clearModel();
 
     try {
-      const gltf = await new GLTFLoader().loadAsync(entry.url);
-      if (!this._loading) return; // another load was started; bail
+      const gltf = await createGltfLoader().loadAsync(entry.url);
+      if (id !== this._loadId) return; // a newer load started while this one awaited; bail
 
       const root = gltf.scene as THREE.Group;
       root.traverse(o => {
@@ -100,7 +103,7 @@ export class CharacterPreview {
         this._mixer.clipAction(idleClip).play();
       }
     } catch {
-      if (!this._loading) return;
+      if (id !== this._loadId) return;
       // GLB not available — show a placeholder capsule.
       const geo  = new THREE.CapsuleGeometry(0.35, 1.1, 4, 8);
       const mat  = new THREE.MeshStandardMaterial({ color: 0x7c3aed, roughness: 0.4 });
@@ -109,12 +112,10 @@ export class CharacterPreview {
       this._scene.add(mesh);
       this._model = mesh;
     }
-
-    this._loading = false;
   }
 
   dispose(): void {
-    this._loading = false;
+    this._loadId++; // invalidate any in-flight load
     cancelAnimationFrame(this._rafId);
     this._clearModel();
     this._renderer.dispose();

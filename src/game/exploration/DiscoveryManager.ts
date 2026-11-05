@@ -31,9 +31,16 @@ export class DiscoveryManager {
 
   /** Register a discoverable landmark zone. */
   addZone(zone: DiscoverableZone): void {
+    // KINEMATIC_FIXED required: the sensor has no parent body (= fixed), and
+    // the player belongs to a kinematicPositionBased body. Without this,
+    // intersectionPair() never returns true for a kinematic-vs-fixed pair —
+    // see the identical issue/fix in AssetPlacer.ts.
     const sensorDesc = RAPIER.ColliderDesc
       .ball(zone.radius)
       .setSensor(true)
+      .setActiveCollisionTypes(
+        RAPIER.ActiveCollisionTypes.DEFAULT | RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED,
+      )
       .setTranslation(zone.x, zone.y, zone.z);
     const sensor = this._physics.world.createCollider(sensorDesc);
     this._zones.set(zone.id, { zone, sensor });
